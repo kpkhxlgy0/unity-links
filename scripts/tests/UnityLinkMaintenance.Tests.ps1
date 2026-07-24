@@ -46,6 +46,21 @@ Test-Case "inject entry point uses Start Menu Known Folder without a desktop lau
     Assert-True (!$injectText.Contains($profileDesktop))
 }
 
+Test-Case "Unity installer delegates transactional writes without version-control probing" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $installerText = Get-Content -LiteralPath (Join-Path $repositoryRoot "Install-UnityPackage.ps1") -Raw
+    $directTextWrite = "[System.IO.File]::WriteAll" + "Text(`$manifestPath"
+    $directByteWrite = "[System.IO.File]::WriteAll" + "Bytes(`$manifestPath"
+    $perforceName = "Per" + "force"
+    $p4Command = "p" + "4 "
+
+    Assert-True ($installerText.Contains("Set-UnityManifestTextSafely"))
+    Assert-True (!$installerText.Contains($directTextWrite))
+    Assert-True (!$installerText.Contains($directByteWrite))
+    Assert-True (!$installerText.Contains($perforceName))
+    Assert-True (!$installerText.Contains($p4Command))
+}
+
 Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
     $expected = "D:\Samples\ExampleUnityProject"
     $actual = Find-UnityProjectRoot `
@@ -134,6 +149,60 @@ Test-Case "rejects invalid JSON before editing" {
     Assert-Throws {
         Update-UnityManifestText -Text '{"dependencies":{' -DependencyValue "file:../pkg"
     } "valid JSON"
+}
+
+Test-Case "reports a version-control-neutral ReadOnly manifest error without changing the file" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    $manifest = Join-Path $root "manifest.json"
+    try
+    {
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $originalBytes = [System.Text.Encoding]::UTF8.GetBytes("original manifest")
+        [System.IO.File]::WriteAllBytes($manifest, $originalBytes)
+        [System.IO.File]::SetAttributes($manifest, [System.IO.FileAttributes]::ReadOnly)
+
+        Assert-Throws {
+            Set-UnityManifestTextSafely -ManifestPath $manifest -Text "updated manifest"
+        } "read-only.*version-control checkout workflow.*clear the ReadOnly attribute"
+        Assert-Equal ([Convert]::ToBase64String($originalBytes)) `
+            ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($manifest)))
+        Assert-True (([System.IO.File]::GetAttributes($manifest) -band [System.IO.FileAttributes]::ReadOnly) -ne 0)
+    }
+    finally
+    {
+        if (Test-Path -LiteralPath $manifest)
+        {
+            [System.IO.File]::SetAttributes($manifest, [System.IO.FileAttributes]::Normal)
+        }
+        if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+    }
+}
+
+Test-Case "reports ACL denial separately and restores original manifest bytes" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    $manifest = Join-Path $root "manifest.json"
+    try
+    {
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $originalBytes = [System.Text.Encoding]::UTF8.GetBytes("original manifest")
+        [System.IO.File]::WriteAllBytes($manifest, $originalBytes)
+        $deniedWrite = {
+            param($path, $text, $encoding)
+            [System.IO.File]::WriteAllText($path, "partial", $encoding)
+            throw [System.UnauthorizedAccessException]::new("Access denied by test.")
+        }
+
+        Assert-Throws {
+            Set-UnityManifestTextSafely -ManifestPath $manifest -Text "updated manifest" `
+                -WriteAction $deniedWrite
+        } "permissions \(ACL\)"
+        Assert-Equal ([Convert]::ToBase64String($originalBytes)) `
+            ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($manifest)))
+    }
+    finally
+    {
+        if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+    }
 }
 
 Test-Case "Unity CheckOnly does not mutate the manifest" {

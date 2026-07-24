@@ -48,20 +48,20 @@ try
 
     if ($CheckOnly -or !$edit.Changed) { exit 0 }
 
-    try
-    {
-        [System.IO.File]::WriteAllText($manifestPath, $edit.Text, $encoding)
-        $verified = [System.IO.File]::ReadAllText($manifestPath, $encoding) | ConvertFrom-Json -AsHashtable
-        if ($verified.dependencies["com.kpk.codex-unity-link"] -cne $expectedValue)
+    $postWriteTest = {
+        param($path)
+
+        try
         {
-            throw "Post-write dependency verification failed."
+            $verified = [System.IO.File]::ReadAllText($path, $encoding) | ConvertFrom-Json -AsHashtable
+            return $verified.dependencies["com.kpk.codex-unity-link"] -ceq $expectedValue
         }
-    }
-    catch
-    {
-        [System.IO.File]::WriteAllBytes($manifestPath, $originalBytes)
-        throw
-    }
+        catch
+        {
+            return $false
+        }
+    }.GetNewClosure()
+    Set-UnityManifestTextSafely -ManifestPath $manifestPath -Text $edit.Text -PostWriteTest $postWriteTest
 
     Write-Host "Updated only com.kpk.codex-unity-link in $manifestPath"
     Write-Host "Unity will maintain Packages/packages-lock.json."

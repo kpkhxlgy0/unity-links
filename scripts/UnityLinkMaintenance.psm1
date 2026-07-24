@@ -214,6 +214,81 @@ function Update-UnityManifestText
     }
 }
 
+function Test-UnauthorizedAccessFailure
+{
+    param([Parameter(Mandatory)] [System.Exception] $Exception)
+
+    $current = $Exception
+    while ($null -ne $current)
+    {
+        if ($current -is [System.UnauthorizedAccessException]) { return $true }
+        $current = $current.InnerException
+    }
+    return $false
+}
+
+function Set-UnityManifestTextSafely
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ManifestPath,
+        [Parameter(Mandatory)] [string] $Text,
+        [scriptblock] $WriteAction,
+        [scriptblock] $PostWriteTest)
+
+    $path = Resolve-NormalizedPath $ManifestPath
+    $attributes = [System.IO.File]::GetAttributes($path)
+    if (($attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0)
+    {
+        throw "Packages/manifest.json is read-only. Make it writable through your version-control checkout " +
+            "workflow, or clear the ReadOnly attribute if the file is unmanaged. Path: $path"
+    }
+
+    $originalBytes = [System.IO.File]::ReadAllBytes($path)
+    $encoding = [System.Text.UTF8Encoding]::new($false, $true)
+    try
+    {
+        if ($null -eq $WriteAction)
+        {
+            [System.IO.File]::WriteAllText($path, $Text, $encoding)
+        }
+        else
+        {
+            & $WriteAction $path $Text $encoding
+        }
+
+        if ($null -ne $PostWriteTest -and !(& $PostWriteTest $path))
+        {
+            throw "Post-write dependency verification failed."
+        }
+    }
+    catch
+    {
+        $writeException = $_.Exception
+        try
+        {
+            $currentBytes = [System.IO.File]::ReadAllBytes($path)
+            if ([Convert]::ToBase64String($currentBytes) -cne [Convert]::ToBase64String($originalBytes))
+            {
+                [System.IO.File]::WriteAllBytes($path, $originalBytes)
+            }
+        }
+        catch
+        {
+            throw "Failed to update Packages/manifest.json and could not restore its original bytes. " +
+                "Path: $path. Restore error: $($_.Exception.Message)"
+        }
+
+        if (Test-UnauthorizedAccessFailure -Exception $writeException)
+        {
+            throw "Access to Packages/manifest.json was denied by Windows permissions (ACL). " +
+                "Grant the current user write access and try again. Path: $path"
+        }
+        throw "Failed to update Packages/manifest.json; its original bytes were restored. " +
+            "Path: $path. Error: $($writeException.Message)"
+    }
+}
+
 function Select-LatestCodexPackage
 {
     [CmdletBinding()]
@@ -803,6 +878,7 @@ Export-ModuleMember -Function @(
     "Find-UnityProjectRoot",
     "Get-UnityPackageManifestValue",
     "Update-UnityManifestText",
+    "Set-UnityManifestTextSafely",
     "Select-LatestCodexPackage",
     "Get-CodexAppLayout",
     "Get-CodexPackageLaunchLayout",
