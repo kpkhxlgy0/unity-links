@@ -179,4 +179,93 @@ Test-Case "Unity installer updates only the manifest dependency" {
     }
 }
 
+Test-Case "selects the highest installed Codex Appx version" {
+    $packages = @(
+        [pscustomobject] @{
+            Version = "26.715.10079.0"
+            PackageFullName = "old"
+            InstallLocation = "C:\old"
+        },
+        [pscustomobject] @{
+            Version = "26.721.3996.0"
+            PackageFullName = "new"
+            InstallLocation = "C:\new"
+        })
+    Assert-Equal "new" (Select-LatestCodexPackage -Packages $packages).PackageFullName
+}
+
+Test-Case "derives official and version-specific mirror paths" {
+    $package = [pscustomobject] @{
+        Version = "26.721.3996.0"
+        PackageFullName = "OpenAI.Codex_26.721.3996.0_x64__2p2nqsd0c76g0"
+        InstallLocation = "C:\Program Files\WindowsApps\OpenAI.Codex_26.721.3996.0_x64__2p2nqsd0c76g0"
+    }
+    $layout = Get-CodexAppLayout -Package $package -LocalAppData "C:\Users\Test\AppData\Local"
+    Assert-Equal (Join-Path $package.InstallLocation "app") $layout.OfficialAppRoot
+    Assert-Equal (
+        "C:\Users\Test\AppData\Local\codex-plusplus\store-apps\$($package.PackageFullName)\app"
+    ) $layout.MirrorAppRoot
+}
+
+Test-Case "classifies current injection and link" {
+    $parameters = @{
+        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
+        CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+        StatusText = "Current ASAR matches patched"
+        LinkStatus = "Current"
+        RunningExecutablePaths = @()
+    }
+    $result = Get-CodexMaintenanceState @parameters
+    Assert-Equal "Current" $result.Status
+}
+
+Test-Case "classifies stale recorded mirror as InjectionRequired" {
+    $parameters = @{
+        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\new\app" }
+        CodexState = [pscustomobject] @{ appRoot = "C:\old\app" }
+        StatusText = "Current ASAR matches patched"
+        LinkStatus = "Current"
+        RunningExecutablePaths = @("C:\Program Files\WindowsApps\OpenAI.Codex\app\Codex.exe")
+    }
+    $result = Get-CodexMaintenanceState @parameters
+    Assert-Equal "InjectionRequired" $result.Status
+}
+
+Test-Case "classifies a missing junction after current injection as LinkRequired" {
+    $parameters = @{
+        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
+        CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+        StatusText = "ASAR matches patched"
+        LinkStatus = "Missing"
+        RunningExecutablePaths = @()
+    }
+    $result = Get-CodexMaintenanceState @parameters
+    Assert-Equal "LinkRequired" $result.Status
+}
+
+Test-Case "blocks stale injection while the exact target mirror is running" {
+    $parameters = @{
+        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\new\app" }
+        CodexState = [pscustomobject] @{ appRoot = "C:\old\app" }
+        StatusText = "ASAR differs"
+        LinkStatus = "Current"
+        RunningExecutablePaths = @("C:\new\app\Codex.exe")
+    }
+    $result = Get-CodexMaintenanceState @parameters
+    Assert-Equal "Blocked" $result.Status
+    Assert-True $result.TargetMirrorRunning
+}
+
+Test-Case "blocks an unsafe real directory at the tweak path" {
+    $parameters = @{
+        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
+        CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+        StatusText = "ASAR matches patched"
+        LinkStatus = "Unsafe"
+        RunningExecutablePaths = @()
+    }
+    $result = Get-CodexMaintenanceState @parameters
+    Assert-Equal "Blocked" $result.Status
+}
+
 Complete-Tests

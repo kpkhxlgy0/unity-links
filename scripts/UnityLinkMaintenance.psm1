@@ -206,6 +206,105 @@ function Update-UnityManifestText
     }
 }
 
+function Select-LatestCodexPackage
+{
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [object[]] $Packages)
+
+    if ($Packages.Count -eq 0)
+    {
+        throw "OpenAI.Codex is not installed for the current user."
+    }
+
+    return $Packages |
+        Sort-Object { [version] $_.Version } -Descending |
+        Select-Object -First 1
+}
+
+function Get-CodexAppLayout
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object] $Package,
+        [Parameter(Mandatory)] [string] $LocalAppData)
+
+    $officialAppRoot = Join-Path (Resolve-NormalizedPath $Package.InstallLocation) "app"
+    $mirrorAppRoot = Join-Path (Resolve-NormalizedPath $LocalAppData) (
+        "codex-plusplus/store-apps/$($Package.PackageFullName)/app")
+
+    return [pscustomobject] @{
+        PackageFullName = [string] $Package.PackageFullName
+        PackageVersion = [version] $Package.Version
+        OfficialAppRoot = $officialAppRoot
+        OfficialAsar = Join-Path $officialAppRoot "resources/app.asar"
+        MirrorAppRoot = $mirrorAppRoot
+        MirrorAsar = Join-Path $mirrorAppRoot "resources/app.asar"
+    }
+}
+
+function Test-PathInside
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $Root)
+
+    $candidate = Resolve-NormalizedPath $Path
+    $normalizedRoot = Resolve-NormalizedPath $Root
+    if (Test-PathEqual $candidate $normalizedRoot) { return $true }
+
+    $rootWithSeparator = $normalizedRoot + [System.IO.Path]::DirectorySeparatorChar
+    return $candidate.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-CodexMaintenanceState
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object] $AppLayout,
+        [AllowNull()] [object] $CodexState,
+        [AllowEmptyString()] [string] $StatusText,
+        [Parameter(Mandatory)]
+        [ValidateSet("Current", "Missing", "WrongTarget", "Unsafe")]
+        [string] $LinkStatus,
+        [string[]] $RunningExecutablePaths = @())
+
+    $stateMatches = $false
+    if ($null -ne $CodexState -and
+        $CodexState.PSObject.Properties.Name -contains "appRoot" -and
+        $CodexState.appRoot)
+    {
+        $stateMatches = Test-PathEqual ([string] $CodexState.appRoot) $AppLayout.MirrorAppRoot
+    }
+
+    $hashMatches = $StatusText -match '(?i)matches patched'
+    $injectionRequired = !$stateMatches -or !$hashMatches
+    $targetMirrorRunning = @(
+        $RunningExecutablePaths |
+            Where-Object { $_ -and (Test-PathInside -Path $_ -Root $AppLayout.MirrorAppRoot) }
+    ).Count -gt 0
+
+    $status = if ($LinkStatus -eq "Unsafe") {
+        "Blocked"
+    } elseif ($injectionRequired -and $targetMirrorRunning) {
+        "Blocked"
+    } elseif ($injectionRequired) {
+        "InjectionRequired"
+    } elseif ($LinkStatus -ne "Current") {
+        "LinkRequired"
+    } else {
+        "Current"
+    }
+
+    return [pscustomobject] @{
+        Status = $status
+        InjectionRequired = $injectionRequired
+        LinkRequired = $LinkStatus -ne "Current"
+        TargetMirrorRunning = $targetMirrorRunning
+        UnsafeLink = $LinkStatus -eq "Unsafe"
+    }
+}
+
 Export-ModuleMember -Function @(
     "Resolve-NormalizedPath",
     "Test-PathEqual",
@@ -213,4 +312,8 @@ Export-ModuleMember -Function @(
     "Test-UnityProjectRoot",
     "Find-UnityProjectRoot",
     "Get-UnityPackageManifestValue",
-    "Update-UnityManifestText")
+    "Update-UnityManifestText",
+    "Select-LatestCodexPackage",
+    "Get-CodexAppLayout",
+    "Test-PathInside",
+    "Get-CodexMaintenanceState")
