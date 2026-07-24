@@ -1,0 +1,13 @@
+{
+  "id": "com.kpk.unity-asset-links",
+  "name": "Unity Asset Links",
+  "version": "0.1.0",
+  "githubRepo": "kpk-local/unity-asset-links",
+  "description": "Open Codex file links under Assets in the matching Unity Editor.",
+  "author": "KPK",
+  "tags": ["unity", "links", "workflow"],
+  "minRuntime": "1.0.0",
+  "scope": "both",
+  "main": "index.js",
+  "permissions": ["ipc", "filesystem"]
+}
