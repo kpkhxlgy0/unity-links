@@ -14,16 +14,19 @@ Test-Case "repository layout follows its supplied root" {
 Test-Case "maintainer checks stay project-neutral and avoid temporary Unity projects" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $projectName = "sg" + "proj"
+    $legacyLayout = "File" + "Packages"
     $files = @(
         (Join-Path $repositoryRoot "codex-tweak/test/index.test.js"),
         (Join-Path $repositoryRoot "scripts/tests/UnityLinkMaintenance.Tests.ps1"),
         (Join-Path $repositoryRoot "scripts/tests/UninjectCheckOnly.Integration.ps1"),
-        (Join-Path $repositoryRoot "docs/design.md"))
+        (Join-Path $repositoryRoot "docs/design.md"),
+        (Join-Path $repositoryRoot "README.md"))
 
     foreach ($file in $files)
     {
         $text = Get-Content -LiteralPath $file -Raw
         Assert-True (!$text.Contains($projectName)) "Project-specific name found in $file."
+        Assert-True (!$text.Contains($legacyLayout)) "Legacy repository layout found in $file."
     }
 
     $nodeTest = Get-Content -LiteralPath $files[0] -Raw
@@ -59,6 +62,24 @@ Test-Case "Unity installer delegates transactional writes without version-contro
     Assert-True (!$installerText.Contains($directByteWrite))
     Assert-True (!$installerText.Contains($perforceName))
     Assert-True (!$installerText.Contains($p4Command))
+}
+
+Test-Case "README covers project-neutral first install and relocation" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.md") -Raw
+    $legacyLayout = "File" + "Packages"
+    $requiredText = @(
+        "https://github.com/kpkhxlgy0/unity-links.git",
+        "PowerShell 7",
+        "Node.js 20",
+        "npm",
+        "-UnityProject",
+        "开始菜单",
+        "移动仓库",
+        "等待 Unity 完成 package 编译")
+
+    foreach ($text in $requiredText) { Assert-True ($readme.Contains($text)) "README is missing: $text" }
+    Assert-True (!$readme.Contains($legacyLayout))
 }
 
 Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
@@ -107,8 +128,8 @@ Test-Case "updates only the dependency value and preserves CRLF" {
         '    "com.kpk.codex-unity-link": "file:old"' + $crlf +
         '  }' + $crlf +
         '}' + $crlf
-    $expected = $before.Replace('"file:old"', '"file:../FilePackages/unity-links/unity-package"')
-    $result = Update-UnityManifestText -Text $before -DependencyValue "file:../FilePackages/unity-links/unity-package"
+    $expected = $before.Replace('"file:old"', '"file:../Tools/unity-links/unity-package"')
+    $result = Update-UnityManifestText -Text $before -DependencyValue "file:../Tools/unity-links/unity-package"
     Assert-True $result.Changed
     Assert-Equal $expected $result.Text
 }

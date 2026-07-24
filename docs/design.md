@@ -197,12 +197,17 @@ Installation and maintenance consists of:
 1. Use `Install-CodexPlusPlus.ps1` only when the compatible runtime is missing; otherwise preserve the installed
    version.
 2. Use `Inject-CodexPlusPlus.ps1` to maintain the latest version-specific mirror and the exact `codex-tweak`
-   junction below `%APPDATA%\codex-plusplus\tweaks`. The script also derives the real desktop executable from the
-   Appx manifest and corrects Codex++ launchers when the package contains a separate `Codex.exe` bootstrapper.
-3. Use `Install-UnityPackage.ps1` to add `com.kpk.codex-unity-link` through a portable relative `file:` dependency.
+   junction below `%APPDATA%\codex-plusplus\tweaks`. The script derives the real desktop executable from the Appx
+   manifest and maintains only the CMD shim and Start Menu shortcut. A legacy desktop shortcut is removed only when
+   its target is inside the managed Codex++ mirror store.
+3. Use `Install-UnityPackage.ps1` once per Unity project to add `com.kpk.codex-unity-link` through a portable relative
+   `file:` dependency. A repository inside the project is found by walking upward; an external repository requires
+   `-UnityProject`.
 4. Let Unity compile the Editor-only package, then manually restart Codex if the maintenance script requests it.
 
 The scripts derive their source paths from their own repository location and do not depend on a fixed checkout path.
+Because both the tweak junction and Unity package dependency reference this repository, moving it requires rerunning
+the injection script and the Unity installer for every affected project.
 
 ## Explicit Non-Goals for Version 0.1.0
 

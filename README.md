@@ -1,98 +1,138 @@
 # Unity Asset Links
 
 让 Codex Desktop 回复中的本地文件链接在属于 Unity 项目 `Assets` 目录时，通过对应的 Unity Editor 打开。
-Prefab 会沿用 Unity 的 Prefab 打开逻辑，自定义 `.asset` 可进入其注册的编辑器；代码链接保留行列信息。
+Prefab 会沿用 Unity 的 Prefab 打开逻辑，注册了自定义编辑器的 `.asset` 会进入对应编辑器，代码链接保留行列信息。
 
-## 要求与目录
+## 前置条件
 
-- Windows
-- Unity 2022.3
-- Node.js 20 或更新版本（仅首次安装 Codex++ 时需要）
-- Codex++ 1.0.0 或更新的兼容版本
+- Windows 10/11。
+- 已为当前 Windows 用户安装官方 Codex Desktop。
+- Unity 2022.3 项目。
+- PowerShell 7，命令名为 `pwsh`。
+- Git，用于克隆本仓库。
+- Node.js 20 或更新版本及 npm；首次安装 Codex++ 1.0.0 时使用。
+- 首次克隆仓库和首次安装 Codex++ 时可访问互联网。
 
-四个维护脚本都从本仓库根目录运行，并使用 `$PSScriptRoot` 自定位，所以仓库移动后无需修改脚本。仓库可以放在
-Unity 项目的 `FilePackages/unity-links` 下，但这只是便于自动发现 Unity 项目的推荐示例，不是硬编码依赖。
+所有 PowerShell 命令都应在本仓库根目录运行。脚本通过 `$PSScriptRoot` 定位文件，不依赖固定盘符或固定项目名。
+
+## 放置仓库
+
+这个仓库既是 Codex++ tweak 的长期源目录，也是 Unity Package Manager `file:` 依赖的长期源目录。安装成功后必须
+保留它；不要把它当作可以删除的临时安装包。
+
+### 放在一个 Unity 项目内
+
+适合主要服务一个项目、希望省略 `-UnityProject` 的情况。仓库必须位于 Unity 项目根目录之下、`Assets` 之外：
 
 ```powershell
-Set-Location <unity-links 仓库目录>
+$unityProject = "D:\Projects\ExampleUnityProject"
+git clone https://github.com/kpkhxlgy0/unity-links.git (Join-Path $unityProject "Tools/unity-links")
+Set-Location (Join-Path $unityProject "Tools/unity-links")
 ```
 
-## 推荐维护流程
+`Install-UnityPackage.ps1` 会从仓库目录向上查找同时包含 `Assets`、`Packages/manifest.json` 和
+`ProjectSettings/ProjectVersion.txt` 的最近项目根目录。检测不到时会报错，不会创建或猜测 Unity 项目。
 
-首次使用：
+### 放在 Unity 项目外
+
+适合用一个稳定仓库服务多个 Unity 项目。此时每个项目都显式传入路径：
 
 ```powershell
+git clone https://github.com/kpkhxlgy0/unity-links.git D:\Tools\unity-links
+Set-Location D:\Tools\unity-links
+pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\Projects\ExampleUnityProject
+```
+
+Codex++ 只需按 Windows 用户全局安装和注入一次；Unity package 必须对每个需要链接功能的 Unity 项目分别安装。
+
+## 首次安装
+
+先检测环境，再安装固定的 Codex++ 1.0.0。普通安装脚本会继续执行当前 Codex Appx 的注入和 tweak 链接维护：
+
+```powershell
+pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
+```
+
+脚本不会关闭、重启或启动 Codex。如果输出 `Blocked` 和退出码 `2`，按提示手动关闭 Codex，再重新运行同一命令。
+不要提前假设需要关闭；只有脚本确认正在运行的镜像会被修改时才需要关闭。
+
+然后为当前 Unity 项目安装 package。仓库位于该项目内部时不传参数：
+
+```powershell
+pwsh -NoProfile -File .\Install-UnityPackage.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-UnityPackage.ps1
 ```
 
-Codex Desktop 更新后，先检测，再按需重新注入：
+仓库位于项目外，或要安装到其他项目时，两个命令都传入显式路径：
+
+```powershell
+pwsh -NoProfile -File .\Install-UnityPackage.ps1 `
+    -UnityProject D:\Projects\AnotherUnityProject -CheckOnly
+pwsh -NoProfile -File .\Install-UnityPackage.ps1 `
+    -UnityProject D:\Projects\AnotherUnityProject
+```
+
+打开对应 Unity 项目，等待 Unity 完成 package 编译，并确认 Console 没有该 package 的编译错误。最后从 Windows
+开始菜单启动 `Codex++`；不要从原始 `Codex` 入口启动。维护脚本只保留 CMD shim 和开始菜单快捷方式，不创建桌面
+快捷方式；由旧版本创建且确实指向 Codex++ 受管镜像的桌面快捷方式会被安全移除。
+
+## 日常维护
+
+### Codex Desktop 更新后
+
+每次 Codex Appx 更新后先检测，再按状态维护：
 
 ```powershell
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
 ```
 
-脚本不会关闭或重启 Codex。若 Codex 正从待修改的镜像运行，脚本会返回 `Blocked`，此时应手动关闭 Codex，
-重新运行脚本，再手动启动。若脚本完成修改时 Codex 仍从官方 Appx 运行，它也会提示手动重启后再验证链接。
-
-### `Install-CodexPlusPlus.ps1`
-
-缺少兼容 CLI 时，从固定 commit `f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7` 安装官方 Codex++ v1.0.0
-源码、构建并进行首次注入，然后交给 Inject 脚本完成 tweak 链接验证。已存在 1.0.0 或更新兼容版时不会下载、
-替换或降级，而是直接交给 Inject 脚本。
-
-`-CheckOnly` 只解析版本、前置条件、最新 Codex Appx 和运行状态，不联网、不创建临时目录、不运行 npm，也不修改
-Codex++ state、镜像或 junction。
-
-### `Inject-CodexPlusPlus.ps1`
-
-自动选择版本最高的已安装 Codex Appx，并维护其独立的 Codex++ 镜像和
-`%APPDATA%\codex-plusplus\tweaks\com.kpk.unity-asset-links` junction。普通模式必要时执行明确的
-`repair --force --app <官方 app 目录>`，再把 junction 校正到当前仓库的 `codex-tweak`。脚本从
-`AppxManifest.xml` 自动读取真实桌面入口，并维护 Codex++ 的 CMD、桌面快捷方式和开始菜单快捷方式；这兼容
-新版 Appx 同时包含 `Codex.exe` 启动器与 `ChatGPT.exe` 桌面主程序的结构。
-
-它不会安装、下载或升级 Codex++，也不会修改 WindowsApps。`-CheckOnly` 完全只读。
+`Inject-CodexPlusPlus.ps1` 自动选择版本最高的已安装 Codex Appx，维护对应的独立 Codex++ 镜像、CMD shim、开始
+菜单快捷方式，以及 `%APPDATA%\codex-plusplus\tweaks\com.kpk.unity-asset-links` junction。它从
+`AppxManifest.xml` 读取真正的桌面入口，因此兼容 Appx 同时包含辅助启动器和桌面主程序的结构。
 
 状态含义：
 
-- `Current`：最新镜像和 tweak junction 都正确。
-- `InjectionRequired`：Codex 更新后，最新版本镜像尚未注入或校验不匹配。
-- `LauncherRequired`：镜像正确，但 Codex++ 启动器仍指向 Appx 中错误的辅助启动程序。
-- `LinkRequired`：注入正确，但 junction 缺失或指向旧仓库位置。
+- `Current`：镜像、CMD、开始菜单快捷方式和 tweak junction 都正确。
+- `InjectionRequired`：最新 Codex 版本尚未注入，或镜像校验不匹配。
+- `LauncherRequired`：CMD 或开始菜单快捷方式缺失、过期；桌面快捷方式不参与此状态。
+- `LinkRequired`：注入正确，但 tweak junction 缺失或仍指向旧仓库位置。
 - `Blocked`：待修改镜像正在运行，或 live tweak 路径是不能安全替换的真实目录。
 
-### `Uninject-CodexPlusPlus.ps1`
+### 移动仓库
 
-使用记录在 `state.json` 中的精确 app 根目录执行官方、非 purge 的 `uninstall --app <记录的镜像>`；仅在卸载成功
-并确认 state 已移除后，才删除 Unity-link junction。它不会使用 `--purge`，也不会删除 Codex++ 源码/命令、其他
-tweak、本仓库或 Unity package 引用。
+移动仓库后，旧 junction 和 Unity manifest 中的相对 `file:` 路径不会自动跟随。保留旧目录，直到以下步骤都成功：
 
-状态含义：
+1. 在新目录运行 `Inject-CodexPlusPlus.ps1`，让 tweak junction 指向新位置。
+2. 对每个受影响的 Unity 项目重新运行 `Install-UnityPackage.ps1`；不在其项目目录内时传 `-UnityProject`。
+3. 打开这些项目并等待 Unity 重新解析 package，确认无误后再删除旧目录。
 
-- `NotInjected`：没有注入 state，也没有残留 junction。
-- `Ready`：可对记录的镜像执行取消注入。
-- `LinkOnly`：没有注入 state，仅需移除安全的残留 junction。
-- `Blocked`：记录的镜像正在运行、CLI 缺失、state 无效，或 live tweak 路径是真实目录。
-
-### `Install-UnityPackage.ps1`
-
-仓库位于 Unity 项目内部时，脚本从自身目录向上查找同时含有 `Assets`、`Packages/manifest.json` 和
-`ProjectSettings/ProjectVersion.txt` 的项目根目录。也可以显式指定其他项目：
+### 取消注入
 
 ```powershell
-pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\path\to\UnityProject
+pwsh -NoProfile -File .\Uninject-CodexPlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Uninject-CodexPlusPlus.ps1
 ```
 
-脚本只插入或更新 `Packages/manifest.json` 中的 `com.kpk.codex-unity-link`，并使用可搬迁的相对 `file:` 路径。
-它不会写 `Packages/packages-lock.json`，该文件仍由 Unity 维护。`-CheckOnly` 只报告 `Current` 或
-`UpdateRequired`。
+取消注入使用 `state.json` 记录的精确 app 根目录执行非 purge 卸载；卸载确认成功后才删除本 tweak 的 junction。
+它不会删除 Codex++ 源码或命令、其他 tweak、本仓库，也不会修改任何 Unity manifest。
 
-Unity package 的移除与 Codex++ 取消注入是两个独立操作。取消注入脚本不会修改 Unity manifest；若要移除
-package，应只删除 manifest 中的 `com.kpk.codex-unity-link` 条目并让 Unity 重新解析。
+Unity package 的移除与 Codex++ 取消注入相互独立。要移除 package，只删除目标项目 manifest 中的
+`com.kpk.codex-unity-link` 条目，然后让 Unity 重新解析。
+
+## Unity manifest 写入
+
+`Install-UnityPackage.ps1` 只插入或更新 `Packages/manifest.json` 中的 `com.kpk.codex-unity-link`，并生成相对于
+目标项目 `Packages` 目录的 `file:` 路径。它不写 `Packages/packages-lock.json`，该文件仍由 Unity 维护。
+
+如果 manifest 带有 ReadOnly 属性，脚本不会自行清除：受版本控制管理时先按当前系统的 checkout 流程使文件可写；
+文件不受版本控制管理时可自行清除 ReadOnly。Windows ACL 拒绝写入会作为另一类错误报告。写入或写后校验失败时，
+脚本会恢复原始字节。`-CheckOnly` 只读取并报告 `Current` 或 `UpdateRequired`，不要求 manifest 可写。
 
 ## 验证
+
+维护脚本与 tweak 测试：
 
 ```powershell
 pwsh -NoProfile -File .\scripts\tests\Run-Tests.ps1
@@ -102,10 +142,11 @@ finally { Pop-Location }
 codexplusplus validate-tweak (Resolve-Path .\codex-tweak).Path
 ```
 
-Unity 项目打开并完成 package 编译后，可直接检查 Named Pipe：
+Unity 项目打开且 package 编译完成后，可检查该项目的 Named Pipe：
 
 ```powershell
-node .\codex-tweak\scripts\send-open.js D:\path\to\UnityProject\Assets\Example.prefab
+node .\codex-tweak\scripts\send-open.js `
+    D:\Projects\ExampleUnityProject\Assets\Example.prefab
 ```
 
 成功响应包含 `"ok":true` 和 `"code":"opened"`。
@@ -113,8 +154,8 @@ node .\codex-tweak\scripts\send-open.js D:\path\to\UnityProject\Assets\Example.p
 ## 安全边界与退出码
 
 所有 Codex 维护脚本都不终止、启动或自动控制 Codex，也不直接修改 WindowsApps。Codex++ 1.0.0 不应在没有
-显式 `--app` 的情况下运行 `codexplusplus debug`；这些维护脚本完全不使用 `debug`。
+显式 `--app` 的情况下运行 `codexplusplus debug`；这些维护脚本不使用 `debug`。
 
-- `0`：检测成功且未被阻塞，或普通模式操作成功。检查模式下仍应读取打印的状态判断是否需要维护。
+- `0`：检测成功且未被阻塞，或普通模式操作成功；检查模式下仍应读取打印状态。
 - `1`：输入、环境、校验或操作失败，未达到可验证的目标状态。
-- `2`：安全阻塞，需要按打印原因手动关闭 Codex 或处理真实目录/缺失命令后重试。
+- `2`：安全阻塞，需要按打印原因手动关闭 Codex，或处理不安全目录/缺失命令后重试。
