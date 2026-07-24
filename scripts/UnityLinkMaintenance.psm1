@@ -502,6 +502,102 @@ function Get-CodexPlusPlusSourceSwapState
     }
 }
 
+function Get-CodexUninjectState
+{
+    [CmdletBinding()]
+    param(
+        [AllowNull()] [object] $CodexState,
+        [bool] $HasCommand,
+        [Parameter(Mandatory)]
+        [ValidateSet("Current", "Missing", "WrongTarget", "Unsafe")]
+        [string] $LinkStatus,
+        [string[]] $RunningExecutablePaths = @())
+
+    if ($LinkStatus -eq "Unsafe")
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "The live tweak path is a real directory."
+            AppRoot = $null
+        }
+    }
+    if ($null -eq $CodexState)
+    {
+        $status = if ($LinkStatus -eq "Missing") { "NotInjected" } else { "LinkOnly" }
+        return [pscustomobject] @{
+            Status = $status
+            Reason = "No Codex++ injection state exists."
+            AppRoot = $null
+        }
+    }
+    if (!$HasCommand)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "The codexplusplus command is unavailable."
+            AppRoot = $null
+        }
+    }
+    if (!($CodexState.PSObject.Properties.Name -contains "appRoot") -or !$CodexState.appRoot)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "Codex++ state has no appRoot."
+            AppRoot = $null
+        }
+    }
+
+    $appRoot = Resolve-NormalizedPath ([string] $CodexState.appRoot)
+    $running = @(
+        $RunningExecutablePaths |
+            Where-Object { $_ -and (Test-PathInside -Path $_ -Root $appRoot) }
+    ).Count -gt 0
+    if ($running)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "The injected Codex mirror is running."
+            AppRoot = $appRoot
+        }
+    }
+    return [pscustomobject] @{
+        Status = "Ready"
+        Reason = "Injection can be removed."
+        AppRoot = $appRoot
+    }
+}
+
+function Get-CodexUninstallArguments
+{
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $AppRoot)
+
+    return [string[]] @("uninstall", "--app", (Resolve-NormalizedPath $AppRoot))
+}
+
+function Remove-TweakLink
+{
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $LinkPath)
+
+    $path = Resolve-NormalizedPath $LinkPath
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $false }
+    $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    $linkTypeProperty = $item.PSObject.Properties["LinkType"]
+    if (!$isReparsePoint -or $null -eq $linkTypeProperty -or !$linkTypeProperty.Value)
+    {
+        throw "The live tweak path is a real directory and will not be removed: $path"
+    }
+
+    Remove-Item -LiteralPath $path -Force
+    if ($null -ne (Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue))
+    {
+        throw "The tweak link still exists after removal: $path"
+    }
+    return $true
+}
+
 Export-ModuleMember -Function @(
     "Resolve-NormalizedPath",
     "Test-PathEqual",
@@ -518,4 +614,7 @@ Export-ModuleMember -Function @(
     "Set-TweakJunction",
     "Get-CodexPlusPlusInstallState",
     "Test-CodexPlusPlusSourceLayout",
-    "Get-CodexPlusPlusSourceSwapState")
+    "Get-CodexPlusPlusSourceSwapState",
+    "Get-CodexUninjectState",
+    "Get-CodexUninstallArguments",
+    "Remove-TweakLink")

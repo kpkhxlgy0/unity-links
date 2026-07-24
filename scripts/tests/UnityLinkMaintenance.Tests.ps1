@@ -378,4 +378,100 @@ Test-Case "refuses to overwrite a retained previous source during swap" {
     Assert-Equal "Blocked" (Get-CodexPlusPlusSourceSwapState -SourceExists $true -PreviousExists $true).Status
 }
 
+Test-Case "classifies absent state and link as NotInjected" {
+    $result = Get-CodexUninjectState -CodexState $null -HasCommand $false -LinkStatus "Missing" `
+        -RunningExecutablePaths @()
+    Assert-Equal "NotInjected" $result.Status
+}
+
+Test-Case "classifies recorded injection as Ready" {
+    $state = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+    $result = Get-CodexUninjectState -CodexState $state -HasCommand $true -LinkStatus "Current" `
+        -RunningExecutablePaths @()
+    Assert-Equal "Ready" $result.Status
+    Assert-Equal "C:\mirror\app" $result.AppRoot
+}
+
+Test-Case "classifies a safe residual junction as LinkOnly" {
+    $result = Get-CodexUninjectState -CodexState $null -HasCommand $false -LinkStatus "WrongTarget" `
+        -RunningExecutablePaths @()
+    Assert-Equal "LinkOnly" $result.Status
+}
+
+Test-Case "blocks uninjection while the recorded mirror is running" {
+    $state = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+    $result = Get-CodexUninjectState -CodexState $state -HasCommand $true -LinkStatus "Current" `
+        -RunningExecutablePaths @("C:\mirror\app\Codex.exe")
+    Assert-Equal "Blocked" $result.Status
+}
+
+Test-Case "blocks unsafe live tweak directories" {
+    $result = Get-CodexUninjectState -CodexState $null -HasCommand $false -LinkStatus "Unsafe" `
+        -RunningExecutablePaths @()
+    Assert-Equal "Blocked" $result.Status
+}
+
+Test-Case "blocks recorded injection when the Codex++ command is unavailable" {
+    $state = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+    $result = Get-CodexUninjectState -CodexState $state -HasCommand $false -LinkStatus "Current" `
+        -RunningExecutablePaths @()
+    Assert-Equal "Blocked" $result.Status
+}
+
+Test-Case "builds an explicit non-purge uninstall command" {
+    $arguments = @(Get-CodexUninstallArguments -AppRoot "C:\mirror\app")
+    Assert-Equal '["uninstall","--app","C:\\mirror\\app"]' (ConvertTo-Json -InputObject $arguments -Compress)
+    Assert-True ($arguments -notcontains "--purge")
+}
+
+Test-Case "removes an exact tweak junction" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $target = Join-Path $root "target"
+        $link = Join-Path $root "link"
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+        Assert-True (Remove-TweakLink -LinkPath $link)
+        Assert-True ($null -eq (Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue))
+        Assert-True (Test-Path -LiteralPath $target -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "refuses to remove an ordinary tweak directory" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Assert-Throws { Remove-TweakLink -LinkPath $root } "real directory"
+        Assert-True (Test-Path -LiteralPath $root -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "removes a broken tweak junction without touching its old target" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $target = Join-Path $root "target"
+        $link = Join-Path $root "link"
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+        Remove-Item -LiteralPath $target -Recurse -Force
+        Assert-True (Remove-TweakLink -LinkPath $link)
+        Assert-True ($null -eq (Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue))
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Complete-Tests
