@@ -49,7 +49,9 @@ Codex++ state、镜像或 junction。
 
 自动选择版本最高的已安装 Codex Appx，并维护其独立的 Codex++ 镜像和
 `%APPDATA%\codex-plusplus\tweaks\com.kpk.unity-asset-links` junction。普通模式必要时执行明确的
-`repair --force --app <官方 app 目录>`，再把 junction 校正到当前仓库的 `codex-tweak`。
+`repair --force --app <官方 app 目录>`，再把 junction 校正到当前仓库的 `codex-tweak`。脚本从
+`AppxManifest.xml` 自动读取真实桌面入口，并维护 Codex++ 的 CMD、桌面快捷方式和开始菜单快捷方式；这兼容
+新版 Appx 同时包含 `Codex.exe` 启动器与 `ChatGPT.exe` 桌面主程序的结构。
 
 它不会安装、下载或升级 Codex++，也不会修改 WindowsApps。`-CheckOnly` 完全只读。
 
@@ -57,6 +59,7 @@ Codex++ state、镜像或 junction。
 
 - `Current`：最新镜像和 tweak junction 都正确。
 - `InjectionRequired`：Codex 更新后，最新版本镜像尚未注入或校验不匹配。
+- `LauncherRequired`：镜像正确，但 Codex++ 启动器仍指向 Appx 中错误的辅助启动程序。
 - `LinkRequired`：注入正确，但 junction 缺失或指向旧仓库位置。
 - `Blocked`：待修改镜像正在运行，或 live tweak 路径是不能安全替换的真实目录。
 

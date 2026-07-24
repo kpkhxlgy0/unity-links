@@ -474,4 +474,85 @@ Test-Case "removes a broken tweak junction without touching its old target" {
     }
 }
 
+Test-Case "uses the Appx manifest executable instead of the Codex-named launcher" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $packageRoot = Join-Path $root "WindowsApps/OpenAI.Codex_test"
+        $officialApp = Join-Path $packageRoot "app"
+        $localAppData = Join-Path $root "LocalAppData"
+        New-Item -ItemType Directory -Path $officialApp -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $officialApp "Codex.exe"), "launcher")
+        [System.IO.File]::WriteAllText((Join-Path $officialApp "ChatGPT.exe"), "desktop")
+        [System.IO.File]::WriteAllText(
+            (Join-Path $packageRoot "AppxManifest.xml"),
+            '<Package><Applications><Application Id="App" Executable="app/ChatGPT.exe" /></Applications></Package>')
+        $package = [pscustomobject] @{
+            InstallLocation = $packageRoot
+            PackageFullName = "OpenAI.Codex_test"
+            Version = "26.721.3996.0"
+        }
+        $appLayout = Get-CodexAppLayout -Package $package -LocalAppData $localAppData
+        New-Item -ItemType Directory -Path $appLayout.MirrorAppRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $appLayout.MirrorAppRoot "ChatGPT.exe"), "desktop")
+
+        $launch = Get-CodexPackageLaunchLayout -Package $package -AppLayout $appLayout
+
+        Assert-Equal (Join-Path $officialApp "ChatGPT.exe") $launch.OfficialExecutable
+        Assert-Equal (Join-Path $appLayout.MirrorAppRoot "ChatGPT.exe") $launch.MirrorExecutable
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "classifies a stale Codex++ launcher as LauncherRequired" {
+    $parameters = @{
+        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
+        CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
+        StatusText = "ASAR matches patched"
+        LinkStatus = "Current"
+        LauncherStatus = "Required"
+        RunningExecutablePaths = @()
+    }
+    Assert-Equal "LauncherRequired" (Get-CodexMaintenanceState @parameters).Status
+}
+
+Test-Case "writes Codex++ launchers for the manifest-declared executable" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $executable = Join-Path $root "mirror/app/ChatGPT.exe"
+        $commandPath = Join-Path $root "WindowsApps/codex-plusplus-codex.cmd"
+        $shortcutPaths = @(
+            (Join-Path $root "Desktop/Codex++.lnk"),
+            (Join-Path $root "Start Menu/Codex++.lnk"))
+        New-Item -ItemType Directory -Path (Split-Path $executable -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($executable, "desktop")
+
+        Assert-True (Set-CodexLauncherArtifacts -ExpectedExecutable $executable -CommandPath $commandPath `
+            -ShortcutPaths $shortcutPaths)
+        Assert-Equal "Current" (Get-CodexLauncherState -ExpectedExecutable $executable `
+            -CommandPath $commandPath -ShortcutPaths $shortcutPaths).Status
+        Assert-True (!(Set-CodexLauncherArtifacts -ExpectedExecutable $executable -CommandPath $commandPath `
+            -ShortcutPaths $shortcutPaths))
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "recognizes the new ChatGPT desktop executable name" {
+    $processes = @(
+        [pscustomobject] @{ Name = "ChatGPT.exe"; ExecutablePath = "C:\mirror\app\ChatGPT.exe" },
+        [pscustomobject] @{ Name = "codex.exe"; ExecutablePath = "C:\mirror\app\resources\codex.exe" },
+        [pscustomobject] @{ Name = "pwsh.exe"; ExecutablePath = "C:\Program Files\PowerShell\7\pwsh.exe" })
+    $paths = @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
+    Assert-Equal 2 $paths.Count
+    Assert-True ($paths -contains "C:\mirror\app\ChatGPT.exe")
+    Assert-True ($paths -contains "C:\mirror\app\resources\codex.exe")
+}
+
 Complete-Tests

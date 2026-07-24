@@ -242,6 +242,62 @@ function Get-CodexAppLayout
     }
 }
 
+function Get-CodexPackageLaunchLayout
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object] $Package,
+        [Parameter(Mandatory)] [object] $AppLayout)
+
+    $packageRoot = Resolve-NormalizedPath ([string] $Package.InstallLocation)
+    $manifestPath = Join-Path $packageRoot "AppxManifest.xml"
+    if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf))
+    {
+        throw "Codex Appx manifest not found: $manifestPath"
+    }
+
+    [xml] $manifest = Get-Content -Raw -LiteralPath $manifestPath
+    $applications = @($manifest.SelectNodes("//*[local-name()='Application' and @Executable]"))
+    if ($applications.Count -eq 0)
+    {
+        throw "Codex Appx manifest has no application executable: $manifestPath"
+    }
+    $application = @($applications | Where-Object { $_.GetAttribute("Id") -eq "App" })[0]
+    if ($null -eq $application) { $application = $applications[0] }
+
+    $relativeToPackage = $application.GetAttribute("Executable").Replace(
+        '/', [System.IO.Path]::DirectorySeparatorChar)
+    $officialExecutable = Resolve-NormalizedPath $relativeToPackage $packageRoot
+    if (!(Test-PathInside -Path $officialExecutable -Root $AppLayout.OfficialAppRoot))
+    {
+        throw "Codex Appx executable is outside the official app root: $officialExecutable"
+    }
+    if (!(Test-Path -LiteralPath $officialExecutable -PathType Leaf))
+    {
+        throw "Codex Appx executable not found: $officialExecutable"
+    }
+
+    $relativeToApp = [System.IO.Path]::GetRelativePath($AppLayout.OfficialAppRoot, $officialExecutable)
+    return [pscustomobject] @{
+        OfficialExecutable = $officialExecutable
+        MirrorExecutable = Resolve-NormalizedPath $relativeToApp $AppLayout.MirrorAppRoot
+        RelativeExecutable = $relativeToApp
+    }
+}
+
+function Get-CodexExecutablePathsFromProcesses
+{
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [object[]] $Processes)
+
+    return @(
+        $Processes |
+            Where-Object { $_.Name -in @("Codex.exe", "ChatGPT.exe") -and $_.ExecutablePath } |
+            ForEach-Object { [string] $_.ExecutablePath } |
+            Select-Object -Unique
+    )
+}
+
 function Test-PathInside
 {
     [CmdletBinding()]
@@ -267,6 +323,8 @@ function Get-CodexMaintenanceState
         [Parameter(Mandatory)]
         [ValidateSet("Current", "Missing", "WrongTarget", "Unsafe")]
         [string] $LinkStatus,
+        [ValidateSet("Current", "Required")]
+        [string] $LauncherStatus = "Current",
         [string[]] $RunningExecutablePaths = @())
 
     $stateMatches = $false
@@ -290,6 +348,8 @@ function Get-CodexMaintenanceState
         "Blocked"
     } elseif ($injectionRequired) {
         "InjectionRequired"
+    } elseif ($LauncherStatus -ne "Current") {
+        "LauncherRequired"
     } elseif ($LinkStatus -ne "Current") {
         "LinkRequired"
     } else {
@@ -299,6 +359,7 @@ function Get-CodexMaintenanceState
     return [pscustomobject] @{
         Status = $status
         InjectionRequired = $injectionRequired
+        LauncherRequired = $LauncherStatus -ne "Current"
         LinkRequired = $LinkStatus -ne "Current"
         TargetMirrorRunning = $targetMirrorRunning
         UnsafeLink = $LinkStatus -eq "Unsafe"
@@ -598,6 +659,98 @@ function Remove-TweakLink
     return $true
 }
 
+function Get-CodexLauncherCommandText
+{
+    param([Parameter(Mandatory)] [string] $ExpectedExecutable)
+
+    return "@echo off`r`nstart `"`" `"$ExpectedExecutable`" %*`r`n"
+}
+
+function Get-CodexLauncherState
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ExpectedExecutable,
+        [Parameter(Mandatory)] [string] $CommandPath,
+        [Parameter(Mandatory)] [string[]] $ShortcutPaths)
+
+    $expected = Resolve-NormalizedPath $ExpectedExecutable
+    $mismatches = [System.Collections.Generic.List[string]]::new()
+    $expectedCommand = Get-CodexLauncherCommandText -ExpectedExecutable $expected
+    if (!(Test-Path -LiteralPath $CommandPath -PathType Leaf) -or
+        (Get-Content -Raw -LiteralPath $CommandPath) -cne $expectedCommand)
+    {
+        $mismatches.Add((Resolve-NormalizedPath $CommandPath))
+    }
+
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($shortcutPath in $ShortcutPaths)
+    {
+        if (!(Test-Path -LiteralPath $shortcutPath -PathType Leaf))
+        {
+            $mismatches.Add((Resolve-NormalizedPath $shortcutPath))
+            continue
+        }
+        $target = $shell.CreateShortcut($shortcutPath).TargetPath
+        if (!$target -or !(Test-PathEqual $target $expected))
+        {
+            $mismatches.Add((Resolve-NormalizedPath $shortcutPath))
+        }
+    }
+
+    return [pscustomobject] @{
+        Status = if ($mismatches.Count -eq 0) { "Current" } else { "Required" }
+        ExpectedExecutable = $expected
+        Mismatches = $mismatches.ToArray()
+    }
+}
+
+function Set-CodexLauncherArtifacts
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ExpectedExecutable,
+        [Parameter(Mandatory)] [string] $CommandPath,
+        [Parameter(Mandatory)] [string[]] $ShortcutPaths)
+
+    $expected = Resolve-NormalizedPath $ExpectedExecutable
+    if (!(Test-Path -LiteralPath $expected -PathType Leaf))
+    {
+        throw "Codex launch executable not found: $expected"
+    }
+    $state = Get-CodexLauncherState -ExpectedExecutable $expected -CommandPath $CommandPath `
+        -ShortcutPaths $ShortcutPaths
+    if ($state.Status -eq "Current") { return $false }
+
+    $commandParent = Split-Path (Resolve-NormalizedPath $CommandPath) -Parent
+    New-Item -ItemType Directory -Path $commandParent -Force | Out-Null
+    $encoding = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText(
+        (Resolve-NormalizedPath $CommandPath),
+        (Get-CodexLauncherCommandText -ExpectedExecutable $expected),
+        $encoding)
+
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($shortcutPath in $ShortcutPaths)
+    {
+        $normalizedShortcut = Resolve-NormalizedPath $shortcutPath
+        New-Item -ItemType Directory -Path (Split-Path $normalizedShortcut -Parent) -Force | Out-Null
+        $shortcut = $shell.CreateShortcut($normalizedShortcut)
+        $shortcut.TargetPath = $expected
+        $shortcut.WorkingDirectory = Split-Path $expected -Parent
+        $shortcut.IconLocation = "$expected,0"
+        $shortcut.Save()
+    }
+
+    $verified = Get-CodexLauncherState -ExpectedExecutable $expected -CommandPath $CommandPath `
+        -ShortcutPaths $ShortcutPaths
+    if ($verified.Status -ne "Current")
+    {
+        throw "Codex++ launcher verification failed: $($verified.Mismatches -join ', ')"
+    }
+    return $true
+}
+
 Export-ModuleMember -Function @(
     "Resolve-NormalizedPath",
     "Test-PathEqual",
@@ -608,6 +761,8 @@ Export-ModuleMember -Function @(
     "Update-UnityManifestText",
     "Select-LatestCodexPackage",
     "Get-CodexAppLayout",
+    "Get-CodexPackageLaunchLayout",
+    "Get-CodexExecutablePathsFromProcesses",
     "Test-PathInside",
     "Get-CodexMaintenanceState",
     "Get-TweakLinkState",
@@ -617,4 +772,6 @@ Export-ModuleMember -Function @(
     "Get-CodexPlusPlusSourceSwapState",
     "Get-CodexUninjectState",
     "Get-CodexUninstallArguments",
-    "Remove-TweakLink")
+    "Remove-TweakLink",
+    "Get-CodexLauncherState",
+    "Set-CodexLauncherArtifacts")

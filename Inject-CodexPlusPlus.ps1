@@ -31,12 +31,10 @@ function Read-CodexPlusPlusState
 
 function Get-CodexExecutablePaths
 {
-    return @(
-        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe'" -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.ExecutablePath } |
-            Where-Object { $_ } |
-            Select-Object -Unique
-    )
+    $processes = @(
+        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" `
+            -ErrorAction SilentlyContinue)
+    return @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
 }
 
 function Get-LiveMaintenanceContext
@@ -46,7 +44,10 @@ function Get-LiveMaintenanceContext
         [Parameter(Mandatory)] [object] $AppLayout,
         [Parameter(Mandatory)] [string] $StatePath,
         [Parameter(Mandatory)] [string] $LinkPath,
-        [Parameter(Mandatory)] [string] $ExpectedTweakPath)
+        [Parameter(Mandatory)] [string] $ExpectedTweakPath,
+        [Parameter(Mandatory)] [string] $ExpectedLaunchExecutable,
+        [Parameter(Mandatory)] [string] $LauncherCommandPath,
+        [Parameter(Mandatory)] [string[]] $ShortcutPaths)
 
     $codexState = Read-CodexPlusPlusState -Path $StatePath
     $statusText = ""
@@ -55,17 +56,21 @@ function Get-LiveMaintenanceContext
         $statusText = (Invoke-CodexPlusPlus -CommandInfo $CommandInfo -Arguments @("status")) -join [Environment]::NewLine
     }
     $linkState = Get-TweakLinkState -LinkPath $LinkPath -ExpectedTarget $ExpectedTweakPath
+    $launcherState = Get-CodexLauncherState -ExpectedExecutable $ExpectedLaunchExecutable `
+        -CommandPath $LauncherCommandPath -ShortcutPaths $ShortcutPaths
     $runningPaths = Get-CodexExecutablePaths
     $maintenanceState = Get-CodexMaintenanceState `
         -AppLayout $AppLayout `
         -CodexState $codexState `
         -StatusText $statusText `
         -LinkStatus $linkState.Status `
+        -LauncherStatus $launcherState.Status `
         -RunningExecutablePaths $runningPaths
 
     return [pscustomobject] @{
         CodexState = $codexState
         LinkState = $linkState
+        LauncherState = $launcherState
         RunningPaths = $runningPaths
         MaintenanceState = $maintenanceState
     }
@@ -75,6 +80,7 @@ try
 {
     if (!$env:APPDATA) { throw "APPDATA is not available." }
     if (!$env:LOCALAPPDATA) { throw "LOCALAPPDATA is not available." }
+    if (!$env:USERPROFILE) { throw "USERPROFILE is not available." }
 
     $expectedTweakPath = Join-Path $PSScriptRoot "codex-tweak"
     $tweakManifestPath = Join-Path $expectedTweakPath "manifest.json"
@@ -94,6 +100,7 @@ try
 
     $package = Select-LatestCodexPackage -Packages @(Get-AppxPackage -Name OpenAI.Codex)
     $appLayout = Get-CodexAppLayout -Package $package -LocalAppData $env:LOCALAPPDATA
+    $launchLayout = Get-CodexPackageLaunchLayout -Package $package -AppLayout $appLayout
     if (!(Test-Path -LiteralPath $appLayout.OfficialAsar -PathType Leaf))
     {
         throw "Official Codex ASAR not found: $($appLayout.OfficialAsar)"
@@ -101,18 +108,26 @@ try
 
     $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
     $linkPath = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
+    $launcherCommandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
+    $shortcutPaths = @(
+        (Join-Path $env:USERPROFILE "Desktop/Codex++.lnk"),
+        (Join-Path $env:APPDATA "Microsoft/Windows/Start Menu/Programs/Codex++.lnk"))
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
         -AppLayout $appLayout `
         -StatePath $statePath `
         -LinkPath $linkPath `
-        -ExpectedTweakPath $expectedTweakPath
+        -ExpectedTweakPath $expectedTweakPath `
+        -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
+        -LauncherCommandPath $launcherCommandPath `
+        -ShortcutPaths $shortcutPaths
 
     Write-Host "Status: $($context.MaintenanceState.Status)"
     Write-Host "Codex++: $version"
     Write-Host "Codex Appx: $($package.PackageFullName)"
     Write-Host "Official app: $($appLayout.OfficialAppRoot)"
     Write-Host "Managed mirror: $($appLayout.MirrorAppRoot)"
+    Write-Host "Launch executable: $($launchLayout.MirrorExecutable)"
     Write-Host "Tweak source: $expectedTweakPath"
 
     if ($CheckOnly)
@@ -147,7 +162,10 @@ try
         -AppLayout $appLayout `
         -StatePath $statePath `
         -LinkPath $linkPath `
-        -ExpectedTweakPath $expectedTweakPath
+        -ExpectedTweakPath $expectedTweakPath `
+        -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
+        -LauncherCommandPath $launcherCommandPath `
+        -ShortcutPaths $shortcutPaths
     if ($context.MaintenanceState.InjectionRequired)
     {
         throw "Codex++ repair completed but the latest managed mirror is not current."
@@ -157,23 +175,28 @@ try
         throw "The live tweak path became unsafe during maintenance: $linkPath"
     }
 
+    $launcherChanged = Set-CodexLauncherArtifacts -ExpectedExecutable $launchLayout.MirrorExecutable `
+        -CommandPath $launcherCommandPath -ShortcutPaths $shortcutPaths
     $linkChanged = Set-TweakJunction -LinkPath $linkPath -ExpectedTarget $expectedTweakPath
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
         -AppLayout $appLayout `
         -StatePath $statePath `
         -LinkPath $linkPath `
-        -ExpectedTweakPath $expectedTweakPath
+        -ExpectedTweakPath $expectedTweakPath `
+        -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
+        -LauncherCommandPath $launcherCommandPath `
+        -ShortcutPaths $shortcutPaths
     if ($context.MaintenanceState.Status -ne "Current")
     {
         throw "Maintenance verification failed with status: $($context.MaintenanceState.Status)"
     }
 
-    Write-Host "Codex++ injection and Unity link tweak are current."
+    Write-Host "Codex++ injection, launchers, and Unity link tweak are current."
     $codexRunningOutsideMirror = @(
         $context.RunningPaths | Where-Object { !(Test-PathInside -Path $_ -Root $appLayout.MirrorAppRoot) }
     ).Count -gt 0
-    if (($injectionChanged -or $linkChanged) -and $codexRunningOutsideMirror)
+    if (($injectionChanged -or $launcherChanged -or $linkChanged) -and $codexRunningOutsideMirror)
     {
         Write-Host "Codex is still running outside the managed mirror. Close Codex manually, then relaunch it before validating link clicks." -ForegroundColor Yellow
     }

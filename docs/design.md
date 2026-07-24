@@ -197,7 +197,8 @@ Installation and maintenance consists of:
 1. Use `Install-CodexPlusPlus.ps1` only when the compatible runtime is missing; otherwise preserve the installed
    version.
 2. Use `Inject-CodexPlusPlus.ps1` to maintain the latest version-specific mirror and the exact `codex-tweak`
-   junction below `%APPDATA%\codex-plusplus\tweaks`.
+   junction below `%APPDATA%\codex-plusplus\tweaks`. The script also derives the real desktop executable from the
+   Appx manifest and corrects Codex++ launchers when the package contains a separate `Codex.exe` bootstrapper.
 3. Use `Install-UnityPackage.ps1` to add `com.kpk.codex-unity-link` through a portable relative `file:` dependency.
 4. Let Unity compile the Editor-only package, then manually restart Codex if the maintenance script requests it.
 

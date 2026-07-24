@@ -32,12 +32,10 @@ function Get-CommandVersion
 
 function Get-CodexExecutablePaths
 {
-    return @(
-        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe'" -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.ExecutablePath } |
-            Where-Object { $_ } |
-            Select-Object -Unique
-    )
+    $processes = @(
+        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" `
+            -ErrorAction SilentlyContinue)
+    return @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
 }
 
 function Invoke-CheckedCommand
