@@ -83,8 +83,19 @@ namespace KPK.CodexUnityLink.Editor
                         {
                             activePipe = pipe;
                         }
-                        await pipe.WaitForConnectionAsync(token);
-                        await ServeAsync(pipe, token);
+                        while (!token.IsCancellationRequested)
+                        {
+                            await pipe.WaitForConnectionAsync(token);
+                            try
+                            {
+                                await ServeAsync(pipe, token);
+                            }
+                            finally
+                            {
+                                if (pipe.IsConnected)
+                                    pipe.Disconnect();
+                            }
+                        }
                     }
                 }
                 catch (OperationCanceledException)
@@ -94,22 +105,17 @@ namespace KPK.CodexUnityLink.Editor
                 catch (ObjectDisposedException)
                 {
                     if (token.IsCancellationRequested) return;
+                    if (!await DelayRetryAsync(token)) return;
                 }
                 catch (IOException)
                 {
                     if (token.IsCancellationRequested) return;
+                    if (!await DelayRetryAsync(token)) return;
                 }
                 catch (Exception exception)
                 {
                     PendingErrors.Enqueue(exception.Message);
-                    try
-                    {
-                        await Task.Delay(1000, token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        return;
-                    }
+                    if (!await DelayRetryAsync(token)) return;
                 }
                 finally
                 {
@@ -118,6 +124,19 @@ namespace KPK.CodexUnityLink.Editor
                         activePipe = null;
                     }
                 }
+            }
+        }
+
+        private static async Task<bool> DelayRetryAsync(CancellationToken token)
+        {
+            try
+            {
+                await Task.Delay(1000, token);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
             }
         }
 

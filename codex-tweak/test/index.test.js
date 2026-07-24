@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -138,6 +139,40 @@ test("round trips one newline-delimited request over a Windows Pipe", async () =
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("gracefully closes the Pipe after a successful response", async () => {
+  const socket = new EventEmitter();
+  let ended = false;
+  let destroyed = false;
+  socket.setEncoding = () => {};
+  socket.write = () => {
+    queueMicrotask(() => socket.emit("data", '{"ok":true,"code":"opened"}\n'));
+  };
+  socket.end = () => {
+    ended = true;
+  };
+  socket.destroy = () => {
+    destroyed = true;
+  };
+  const request = __test.sendPipeRequest(
+    "fake-pipe",
+    { version: 1, requestId: "r1", action: "openAsset" },
+    {
+      net: {
+        createConnection() {
+          queueMicrotask(() => socket.emit("connect"));
+          return socket;
+        },
+      },
+      connectTimeoutMs: 300,
+      responseTimeoutMs: 1000,
+    },
+  );
+
+  assert.equal((await request).code, "opened");
+  assert.equal(ended, true);
+  assert.equal(destroyed, false);
 });
 
 test("registers the main IPC handler only once across hot reloads", () => {

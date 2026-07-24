@@ -138,9 +138,13 @@ function sendPipeRequest(pipePath, payload, deps) {
       settled = true;
       clearTimeout(connectTimer);
       clearTimeout(responseTimer);
-      socket.destroy();
-      if (error) reject(error);
-      else resolve(value);
+      if (error) {
+        socket.destroy();
+        reject(error);
+        return;
+      }
+      socket.end();
+      resolve(value);
     }
 
     socket.setEncoding("utf8");
