@@ -51,4 +51,132 @@ Test-Case "rejects a directory without every Unity marker" {
     }
 }
 
+Test-Case "updates only the dependency value and preserves CRLF" {
+    $crlf = [string] ([char] 13) + [char] 10
+    $before = '{' + $crlf +
+        '  "name": "keep",' + $crlf +
+        '  "dependencies": {' + $crlf +
+        '    "a": "1",' + $crlf +
+        '    "com.kpk.codex-unity-link": "file:old"' + $crlf +
+        '  }' + $crlf +
+        '}' + $crlf
+    $expected = $before.Replace('"file:old"', '"file:../FilePackages/unity-links/unity-package"')
+    $result = Update-UnityManifestText -Text $before -DependencyValue "file:../FilePackages/unity-links/unity-package"
+    Assert-True $result.Changed
+    Assert-Equal $expected $result.Text
+}
+
+Test-Case "inserts the dependency and preserves LF plus unrelated text" {
+    $lf = [string] [char] 10
+    $before = '{' + $lf +
+        '  "name": "keep",' + $lf +
+        '  "dependencies": {' + $lf +
+        '    "a": "1"' + $lf +
+        '  }' + $lf +
+        '}' + $lf
+    $expected = '{' + $lf +
+        '  "name": "keep",' + $lf +
+        '  "dependencies": {' + $lf +
+        '    "a": "1",' + $lf +
+        '    "com.kpk.codex-unity-link": "file:../pkg"' + $lf +
+        '  }' + $lf +
+        '}' + $lf
+    $result = Update-UnityManifestText -Text $before -DependencyValue "file:../pkg"
+    Assert-True $result.Changed
+    Assert-Equal $expected $result.Text
+}
+
+Test-Case "returns the original manifest for an exact no-op" {
+    $lf = [string] [char] 10
+    $before = '{' + $lf +
+        '  "dependencies": {' + $lf +
+        '    "com.kpk.codex-unity-link": "file:../pkg"' + $lf +
+        '  }' + $lf +
+        '}' + $lf
+    $result = Update-UnityManifestText -Text $before -DependencyValue "file:../pkg"
+    Assert-True (!$result.Changed)
+    Assert-Equal $before $result.Text
+}
+
+Test-Case "rejects invalid JSON before editing" {
+    Assert-Throws {
+        Update-UnityManifestText -Text '{"dependencies":{' -DependencyValue "file:../pkg"
+    } "valid JSON"
+}
+
+Test-Case "Unity CheckOnly does not mutate the manifest" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $directories = @(
+            (Join-Path $root "Assets"),
+            (Join-Path $root "Packages"),
+            (Join-Path $root "ProjectSettings"))
+        New-Item -ItemType Directory -Path $directories -Force | Out-Null
+        $manifest = Join-Path $root "Packages/manifest.json"
+        $crlf = [string] ([char] 13) + [char] 10
+        [System.IO.File]::WriteAllText($manifest, '{' + $crlf + '  "dependencies": {}' + $crlf + '}' + $crlf)
+        [System.IO.File]::WriteAllText(
+            (Join-Path $root "ProjectSettings/ProjectVersion.txt"),
+            "m_EditorVersion: 2022.3.23f1")
+        $before = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
+        $entryPoint = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "Install-UnityPackage.ps1"
+        $pwshPath = (Get-Process -Id $PID).Path
+        & $pwshPath -NoProfile -File $entryPoint -UnityProject $root -CheckOnly | Out-Null
+        $entryPointExitCode = $LASTEXITCODE
+        Assert-Equal 0 $entryPointExitCode
+        Assert-Equal $before (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "Unity installer updates only the manifest dependency" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $directories = @(
+            (Join-Path $root "Assets"),
+            (Join-Path $root "Packages"),
+            (Join-Path $root "ProjectSettings"))
+        New-Item -ItemType Directory -Path $directories -Force | Out-Null
+        $lf = [string] [char] 10
+        $manifest = Join-Path $root "Packages/manifest.json"
+        $lock = Join-Path $root "Packages/packages-lock.json"
+        $manifestText = '{' + $lf +
+            '  "name": "keep",' + $lf +
+            '  "dependencies": {' + $lf +
+            '    "a": "1"' + $lf +
+            '  }' + $lf +
+            '}' + $lf
+        [System.IO.File]::WriteAllText($manifest, $manifestText)
+        [System.IO.File]::WriteAllText($lock, '{"sentinel":true}')
+        [System.IO.File]::WriteAllText(
+            (Join-Path $root "ProjectSettings/ProjectVersion.txt"),
+            "m_EditorVersion: 2022.3.23f1")
+        $lockHash = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
+        $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+        $entryPoint = Join-Path $repositoryRoot "Install-UnityPackage.ps1"
+        $packageRoot = Join-Path $repositoryRoot "unity-package"
+        $expectedValue = Get-UnityPackageManifestValue -UnityProjectRoot $root -PackageRoot $packageRoot
+        $pwshPath = (Get-Process -Id $PID).Path
+
+        & $pwshPath -NoProfile -File $entryPoint -UnityProject $root | Out-Null
+        $entryPointExitCode = $LASTEXITCODE
+
+        Assert-Equal 0 $entryPointExitCode
+        $updated = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json -AsHashtable
+        Assert-Equal "keep" $updated.name
+        Assert-Equal "1" $updated.dependencies.a
+        Assert-Equal $expectedValue $updated.dependencies["com.kpk.codex-unity-link"]
+        Assert-Equal $lockHash (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Complete-Tests
