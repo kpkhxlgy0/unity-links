@@ -41,14 +41,17 @@ $beforeState = Get-OptionalFileHash $statePath
 $beforeLink = Get-LinkSnapshot $liveLink
 $beforeAsar = Get-OptionalFileHash $appLayout.MirrorAsar
 $commandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
-$shortcutPaths = @(
-    (Join-Path $env:USERPROFILE "Desktop/Codex++.lnk"),
-    (Join-Path $env:APPDATA "Microsoft/Windows/Start Menu/Programs/Codex++.lnk"))
+$programsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+if (!$programsPath) { throw "The current user's Start Menu Programs folder is unavailable." }
+$startMenuShortcutPath = Join-Path $programsPath "Codex++.lnk"
+$desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+$desktopShortcutPath = if ($desktopPath) { Join-Path $desktopPath "Codex++.lnk" } else { $null }
 $beforeCommand = Get-OptionalFileHash $commandPath
-$beforeShortcutTargets = @($shortcutPaths | ForEach-Object { Get-ShortcutTarget $_ }) -join "|"
+$beforeStartMenuTarget = Get-ShortcutTarget $startMenuShortcutPath
+$beforeDesktopTarget = if ($desktopShortcutPath) { Get-ShortcutTarget $desktopShortcutPath } else { "Unavailable" }
 $launchLayout = Get-CodexPackageLaunchLayout -Package $package -AppLayout $appLayout
 $beforeLauncherState = Get-CodexLauncherState -ExpectedExecutable $launchLayout.MirrorExecutable `
-    -CommandPath $commandPath -ShortcutPaths $shortcutPaths
+    -CommandPath $commandPath -StartMenuShortcutPath $startMenuShortcutPath
 $pwshPath = (Get-Process -Id $PID).Path
 
 $output = & $pwshPath -NoProfile -File $entryPoint -CheckOnly 2>&1
@@ -80,9 +83,13 @@ if ($beforeCommand -cne (Get-OptionalFileHash $commandPath))
 {
     throw "The Codex++ command launcher changed during -CheckOnly."
 }
-if ($beforeShortcutTargets -cne (@($shortcutPaths | ForEach-Object { Get-ShortcutTarget $_ }) -join "|"))
+if ($beforeStartMenuTarget -cne (Get-ShortcutTarget $startMenuShortcutPath))
 {
-    throw "A Codex++ shortcut changed during -CheckOnly."
+    throw "The Codex++ Start Menu shortcut changed during -CheckOnly."
+}
+if ($desktopShortcutPath -and $beforeDesktopTarget -cne (Get-ShortcutTarget $desktopShortcutPath))
+{
+    throw "The legacy Codex++ desktop shortcut changed during -CheckOnly."
 }
 
 Write-Host "PASS Inject-CodexPlusPlus.ps1 -CheckOnly is mutation-free"

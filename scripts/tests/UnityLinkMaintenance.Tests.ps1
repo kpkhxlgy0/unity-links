@@ -41,12 +41,17 @@ Test-Case "maintainer checks stay project-neutral and avoid temporary Unity proj
 Test-Case "inject entry point uses Start Menu Known Folder without a desktop launcher requirement" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $injectText = Get-Content -LiteralPath (Join-Path $repositoryRoot "Inject-CodexPlusPlus.ps1") -Raw
+    $integrationText = Get-Content `
+        -LiteralPath (Join-Path $repositoryRoot "scripts/tests/InjectCheckOnly.Integration.ps1") -Raw
     $legacyParameter = "Shortcut" + "Paths"
     $profileDesktop = '$env:USER' + 'PROFILE "Desktop'
 
     Assert-True ($injectText.Contains("[Environment+SpecialFolder]::Programs"))
     Assert-True (!$injectText.Contains($legacyParameter))
     Assert-True (!$injectText.Contains($profileDesktop))
+    Assert-True ($integrationText.Contains("[Environment+SpecialFolder]::Programs"))
+    Assert-True (!$integrationText.Contains($legacyParameter))
+    Assert-True (!$integrationText.Contains($profileDesktop))
 }
 
 Test-Case "Unity installer delegates transactional writes without version-control probing" {
