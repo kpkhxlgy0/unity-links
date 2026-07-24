@@ -268,4 +268,64 @@ Test-Case "blocks an unsafe real directory at the tweak path" {
     Assert-Equal "Blocked" $result.Status
 }
 
+Test-Case "refuses to replace a real tweak directory" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $link = Join-Path $root "live/com.kpk.unity-asset-links"
+        $target = Join-Path $root "source/codex-tweak"
+        New-Item -ItemType Directory -Path $link, $target -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $target "manifest.json"), '{}')
+        $state = Get-TweakLinkState -LinkPath $link -ExpectedTarget $target
+        Assert-Equal "Unsafe" $state.Status
+        Assert-Throws { Set-TweakJunction -LinkPath $link -ExpectedTarget $target } "real directory"
+        Assert-True (Test-Path -LiteralPath $link -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "corrects only a wrong junction target" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $link = Join-Path $root "live/com.kpk.unity-asset-links"
+        $oldTarget = Join-Path $root "old/codex-tweak"
+        $newTarget = Join-Path $root "new/codex-tweak"
+        New-Item -ItemType Directory -Path (Split-Path $link -Parent), $oldTarget, $newTarget -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $newTarget "manifest.json"), '{}')
+        New-Item -ItemType Junction -Path $link -Target $oldTarget | Out-Null
+        Assert-Equal "WrongTarget" (Get-TweakLinkState $link $newTarget).Status
+        Set-TweakJunction -LinkPath $link -ExpectedTarget $newTarget | Out-Null
+        Assert-Equal "Current" (Get-TweakLinkState $link $newTarget).Status
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "recognizes and repairs a junction whose old target disappeared" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $link = Join-Path $root "live/com.kpk.unity-asset-links"
+        $oldTarget = Join-Path $root "old/codex-tweak"
+        $newTarget = Join-Path $root "new/codex-tweak"
+        New-Item -ItemType Directory -Path (Split-Path $link -Parent), $oldTarget, $newTarget -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $newTarget "manifest.json"), '{}')
+        New-Item -ItemType Junction -Path $link -Target $oldTarget | Out-Null
+        Remove-Item -LiteralPath $oldTarget -Recurse -Force
+        Assert-Equal "WrongTarget" (Get-TweakLinkState $link $newTarget).Status
+        Set-TweakJunction -LinkPath $link -ExpectedTarget $newTarget | Out-Null
+        Assert-Equal "Current" (Get-TweakLinkState $link $newTarget).Status
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Complete-Tests
