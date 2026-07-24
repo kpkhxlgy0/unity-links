@@ -206,13 +206,7 @@ namespace KPK.CodexUnityLink.Editor
                 return SerializeFailure(error);
             }
 
-            bool opened;
-            if (request.line <= 0)
-                opened = AssetDatabase.OpenAsset(asset);
-            else if (request.column <= 0)
-                opened = AssetDatabase.OpenAsset(asset, request.line);
-            else
-                opened = AssetDatabase.OpenAsset(asset, request.line, request.column);
+            var opened = OpenAsset(asset, request.line, request.column);
 
             if (!opened)
             {
@@ -224,6 +218,25 @@ namespace KPK.CodexUnityLink.Editor
             }
             return UnityAssetLinkProtocol.Serialize(
                 UnityAssetLinkProtocol.Success(request.requestId));
+        }
+
+        private static bool OpenAsset(UnityEngine.Object asset, int line, int column)
+        {
+            if (asset is AnimationClip clip) return OpenAnimationClip(clip);
+            if (line <= 0) return AssetDatabase.OpenAsset(asset);
+            if (column <= 0) return AssetDatabase.OpenAsset(asset, line);
+            return AssetDatabase.OpenAsset(asset, line, column);
+        }
+
+        private static bool OpenAnimationClip(AnimationClip clip)
+        {
+            Selection.activeObject = clip;
+            EditorGUIUtility.PingObject(clip);
+            var window = EditorWindow.GetWindow<AnimationWindow>();
+            window.animationClip = clip;
+            window.Show();
+            window.Focus();
+            return window.animationClip == clip;
         }
 
         private static string SerializeFailure(UnityAssetLinkResponse response)

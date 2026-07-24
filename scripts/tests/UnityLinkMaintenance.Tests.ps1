@@ -11,6 +11,22 @@ Test-Case "repository layout follows its supplied root" {
     Assert-Equal (Join-Path $root "unity-package") $layout.PackageRoot
 }
 
+Test-Case "Unity receiver dispatches AnimationClip assets without changing generic fallbacks" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $receiverPath = Join-Path $repositoryRoot "unity-package/Editor/UnityAssetLinkReceiver.cs"
+    $receiver = Get-Content -LiteralPath $receiverPath -Raw
+
+    Assert-True ($receiver.Contains("var opened = OpenAsset(asset, request.line, request.column)"))
+    Assert-True ($receiver.Contains("if (asset is AnimationClip clip)"))
+    Assert-True ($receiver.Contains("if (line <= 0) return AssetDatabase.OpenAsset(asset)"))
+    Assert-True ($receiver.Contains("if (column <= 0) return AssetDatabase.OpenAsset(asset, line)"))
+    Assert-True ($receiver.Contains("return AssetDatabase.OpenAsset(asset, line, column)"))
+    Assert-True ($receiver.Contains("Selection.activeObject = clip"))
+    Assert-True ($receiver.Contains("EditorGUIUtility.PingObject(clip)"))
+    Assert-True ($receiver.Contains("window.animationClip = clip"))
+    Assert-True ($receiver.Contains("return window.animationClip == clip"))
+}
+
 Test-Case "maintainer checks stay project-neutral and avoid temporary Unity projects" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $projectName = "sg" + "proj"
