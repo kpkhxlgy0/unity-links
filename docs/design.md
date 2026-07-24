@@ -34,7 +34,7 @@ was selected over a polled file queue because it provides immediate responses an
 ## Source Layout
 
 ```text
-D:\workspace\codex-tweaks\unity-links\
+<unity-links-repository>\
   README.md
   docs\
     design.md
@@ -192,13 +192,16 @@ Automated Unity test suites and battle regression tests are outside this task un
 
 ## Installation Model
 
-Development installation consists of:
+Installation and maintenance consists of:
 
-1. Link `codex-tweak` into `%APPDATA%\codex-plusplus\tweaks` with `codexplusplus dev ... --no-watch`.
-2. Add `com.kpk.codex-unity-link` to a Unity project's `Packages/manifest.json` using an absolute local `file:` path.
-3. Reload Codex++ tweaks and let Unity compile the Editor-only package.
+1. Use `Install-CodexPlusPlus.ps1` only when the compatible runtime is missing; otherwise preserve the installed
+   version.
+2. Use `Inject-CodexPlusPlus.ps1` to maintain the latest version-specific mirror and the exact `codex-tweak`
+   junction below `%APPDATA%\codex-plusplus\tweaks`.
+3. Use `Install-UnityPackage.ps1` to add `com.kpk.codex-unity-link` through a portable relative `file:` dependency.
+4. Let Unity compile the Editor-only package, then manually restart Codex if the maintenance script requests it.
 
-These actions occur during implementation only after the implementation plan is reviewed.
+The scripts derive their source paths from their own repository location and do not depend on a fixed checkout path.
 
 ## Explicit Non-Goals for Version 0.1.0
 
