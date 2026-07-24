@@ -61,14 +61,22 @@ function Test-UnityProjectRoot
 function Find-UnityProjectRoot
 {
     [CmdletBinding()]
-    param([Parameter(Mandatory)] [string] $StartPath)
+    param(
+        [Parameter(Mandatory)] [string] $StartPath,
+        [scriptblock] $ProjectRootTest
+    )
+
+    if ($null -eq $ProjectRootTest)
+    {
+        $ProjectRootTest = { param($candidate) Test-UnityProjectRoot $candidate }
+    }
 
     $current = Resolve-NormalizedPath $StartPath
     if (Test-Path -LiteralPath $current -PathType Leaf) { $current = Split-Path $current -Parent }
 
     while ($current)
     {
-        if (Test-UnityProjectRoot $current) { return $current }
+        if (& $ProjectRootTest $current) { return $current }
 
         $parent = Split-Path $current -Parent
         if (!$parent -or (Test-PathEqual $parent $current)) { break }

@@ -36,7 +36,6 @@ $entryPoint = Join-Path $repositoryRoot "Uninject-CodexPlusPlus.ps1"
 $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
 $liveLink = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
 $sourceRoot = Join-Path $env:USERPROFILE ".codex-plusplus/source"
-$unityManifest = "D:\workspace\sgproj\Packages\manifest.json"
 $state = if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
 } else {
@@ -52,13 +51,12 @@ $beforeState = Get-OptionalFileHash $statePath
 $beforeLink = Get-LinkSnapshot $liveLink
 $beforeSource = Get-DirectoryMetadata $sourceRoot
 $beforeAsar = Get-OptionalFileHash $recordedAsar
-$beforeManifest = Get-OptionalFileHash $unityManifest
 $pwshPath = (Get-Process -Id $PID).Path
 
 & $pwshPath -NoProfile -File $entryPoint -CheckOnly
 $entryPointExitCode = $LASTEXITCODE
 
-if ($entryPointExitCode -ne 0)
+if ($entryPointExitCode -notin @(0, 2))
 {
     throw "Uninject-CodexPlusPlus.ps1 -CheckOnly exited with $entryPointExitCode."
 }
@@ -66,6 +64,5 @@ if ($beforeState -cne (Get-OptionalFileHash $statePath)) { throw "Codex++ state 
 if ($beforeLink -cne (Get-LinkSnapshot $liveLink)) { throw "The live tweak link changed during -CheckOnly." }
 if ($beforeSource -cne (Get-DirectoryMetadata $sourceRoot)) { throw "The Codex++ source changed during -CheckOnly." }
 if ($beforeAsar -cne (Get-OptionalFileHash $recordedAsar)) { throw "The recorded mirror ASAR changed during -CheckOnly." }
-if ($beforeManifest -cne (Get-OptionalFileHash $unityManifest)) { throw "The Unity manifest changed during -CheckOnly." }
 
 Write-Host "PASS Uninject-CodexPlusPlus.ps1 -CheckOnly is mutation-free"

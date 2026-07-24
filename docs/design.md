@@ -9,8 +9,8 @@ When a user normally clicks a local file link in a Codex Desktop reply, route ex
 `AssetDatabase.OpenAsset`, preserving normal Unity double-click behavior such as Prefab Mode, custom skill asset
 editors, scene opening, and the configured external code editor.
 
-The solution must detect Unity projects from link paths rather than hard-code `D:\workspace\sgproj`. It must remain
-small, local-only, and independent from the Unity repository.
+The solution must detect Unity projects from link paths rather than hard-code a checkout location. It must remain
+small, local-only, and independent from any particular Unity repository.
 
 ## Success Criteria
 
@@ -96,7 +96,7 @@ requests in a background task.
 Transport callbacks never call Unity APIs directly. A valid request is queued to the Unity main thread. The main-thread
 handler loads the object with `AssetDatabase.LoadAssetAtPath<UnityEngine.Object>` and calls the appropriate overload of
 `AssetDatabase.OpenAsset` for the supplied line and column. This preserves existing `[OnOpenAsset]` handlers, including
-Prefab and project-specific skill asset editors.
+Prefab Mode and registered custom asset editors.
 
 The server cancels and disposes its listener before assembly reload and when Unity quits, then starts again after the
 next domain load.
@@ -112,7 +112,7 @@ Request fields:
   "version": 1,
   "requestId": "opaque-id",
   "action": "openAsset",
-  "projectRoot": "D:\\workspace\\sgproj",
+  "projectRoot": "D:\\Projects\\ExampleUnityProject",
   "assetPath": "Assets/Example/Example.prefab",
   "line": 0,
   "column": 0
@@ -185,7 +185,7 @@ The implementation phase will use:
 - `codexplusplus validate-tweak` for manifest and entry validation.
 - A direct protocol client check for success, timeout, malformed request, wrong-project, and outside-Assets responses.
 - Unity refresh/compile and Console inspection after adding the local package to a project.
-- Manual open checks for one Prefab, one project-specific skill asset, and one `.cs` file, confirming each reaches the
+- Manual open checks for one Prefab, one registered custom asset, and one `.cs` file, confirming each reaches the
   normal Unity `AssetDatabase.OpenAsset` route.
 
 Automated Unity test suites and battle regression tests are outside this task unless explicitly requested.
@@ -212,4 +212,4 @@ The scripts derive their source paths from their own repository location and do 
 - HTTP transport, remote access, or an MCP server.
 - Custom extension mappings, context menus, or a settings page.
 - Direct modification of the Codex application ASAR beyond the installed Codex++ runtime.
-- Copying the tweak or receiver source into `sgproj`.
+- Copying the tweak or receiver source into a particular host Unity project.

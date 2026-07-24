@@ -2,17 +2,41 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { EventEmitter } = require("node:events");
-const fs = require("node:fs");
 const net = require("node:net");
-const os = require("node:os");
 const path = require("node:path");
 const { __test } = require("../index.js");
 
+const windowsPath = path.win32;
+
+function createVirtualFs({ files = [], directories = [] }) {
+  const normalize = (value) => windowsPath.normalize(value).toLowerCase();
+  const fileKeys = new Set(files.map(normalize));
+  const directoryKeys = new Set(directories.map(normalize));
+
+  return {
+    existsSync(value) {
+      const key = normalize(value);
+      return fileKeys.has(key) || directoryKeys.has(key);
+    },
+    realpathSync(value) {
+      const normalized = windowsPath.normalize(value);
+      const key = normalize(normalized);
+      if (!fileKeys.has(key) && !directoryKeys.has(key)) throw new Error("Path not found");
+      return normalized;
+    },
+    statSync(value) {
+      const key = normalize(value);
+      if (!fileKeys.has(key) && !directoryKeys.has(key)) throw new Error("Path not found");
+      return { isFile: () => fileKeys.has(key) };
+    },
+  };
+}
+
 test("parses Windows paths with line and column", () => {
   assert.deepEqual(
-    __test.parseDestination("D:/workspace/sgproj/Assets/GameEntry.cs:12:4"),
+    __test.parseDestination("D:/Projects/ExampleUnityProject/Assets/GameEntry.cs:12:4"),
     {
-      path: "D:\\workspace\\sgproj\\Assets\\GameEntry.cs",
+      path: "D:\\Projects\\ExampleUnityProject\\Assets\\GameEntry.cs",
       line: 12,
       column: 4,
     },
@@ -21,9 +45,9 @@ test("parses Windows paths with line and column", () => {
 
 test("parses file URLs emitted by Markdown renderers", () => {
   assert.deepEqual(
-    __test.parseDestination("file:///D:/workspace/sgproj/Assets/Light.prefab"),
+    __test.parseDestination("file:///D:/Projects/ExampleUnityProject/Assets/Light.prefab"),
     {
-      path: "D:\\workspace\\sgproj\\Assets\\Light.prefab",
+      path: "D:\\Projects\\ExampleUnityProject\\Assets\\Light.prefab",
       line: 0,
       column: 0,
     },
@@ -67,50 +91,38 @@ test("accepts only an unmodified primary click", () => {
 
 test("builds a deterministic case-insensitive project Pipe name", () => {
   const actual = __test.pipeNameForProjectRoot(
-    "D:\\workspace\\sgproj\\",
+    "D:\\Projects\\ExampleUnityProject\\",
     crypto,
     path.win32,
   );
   assert.equal(
     actual,
-    "kpk-codex-unity-link-v1-89889fa57e5a473624456426acde9465c1669501e10ce77420e48f45f190662d",
+    "kpk-codex-unity-link-v1-562b1e523731c184d83aaafbb3ca32da391c438f759d8aacfbb2200d470b9bda",
   );
 });
 
 test("finds the nearest Unity root and produces an Assets path", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-unity-link-"));
-  try {
-    fs.mkdirSync(path.join(root, "Assets", "Data"), { recursive: true });
-    fs.mkdirSync(path.join(root, "ProjectSettings"), { recursive: true });
-    fs.writeFileSync(
-      path.join(root, "ProjectSettings", "ProjectVersion.txt"),
-      "m_EditorVersion: 2022.3.23f1",
-    );
-    const file = path.join(root, "Assets", "Data", "A.asset");
-    fs.writeFileSync(file, "asset");
-    const result = __test.findUnityTarget(file, fs, path);
-    assert.equal(result.ok, true);
-    assert.equal(result.assetPath, "Assets/Data/A.asset");
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const file = windowsPath.join(assets, "Data", "A.asset");
+  const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({ files: [file, version], directories: [assets] });
+
+  const result = __test.findUnityTarget(file, fsApi, windowsPath);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.assetPath, "Assets/Data/A.asset");
 });
 
 test("does not route a directory or a file outside Assets", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-unity-link-"));
-  try {
-    fs.mkdirSync(path.join(root, "Assets"), { recursive: true });
-    fs.mkdirSync(path.join(root, "ProjectSettings"), { recursive: true });
-    fs.writeFileSync(path.join(root, "ProjectSettings", "ProjectVersion.txt"), "version");
-    fs.writeFileSync(path.join(root, "outside.txt"), "outside");
-    assert.equal(__test.findUnityTarget(path.join(root, "Assets"), fs, path).code, "notAssetFile");
-    assert.equal(
-      __test.findUnityTarget(path.join(root, "outside.txt"), fs, path).code,
-      "notAssetFile",
-    );
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const outside = windowsPath.join(root, "outside.txt");
+  const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({ files: [outside, version], directories: [assets] });
+
+  assert.equal(__test.findUnityTarget(assets, fsApi, windowsPath).code, "notAssetFile");
+  assert.equal(__test.findUnityTarget(outside, fsApi, windowsPath).code, "notAssetFile");
 });
 
 test("round trips one newline-delimited request over a Windows Pipe", async () => {
@@ -193,45 +205,41 @@ test("registers the main IPC handler only once across hot reloads", () => {
 });
 
 test("reveals an asset when the matching Unity Pipe is unavailable", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-unity-link-"));
-  try {
-    fs.mkdirSync(path.join(root, "Assets"), { recursive: true });
-    fs.mkdirSync(path.join(root, "ProjectSettings"), { recursive: true });
-    fs.writeFileSync(path.join(root, "ProjectSettings", "ProjectVersion.txt"), "version");
-    const file = path.join(root, "Assets", "A.asset");
-    fs.writeFileSync(file, "asset");
-    const revealed = [];
-    const result = await __test.handleOpenAsset(
-      { path: file, line: 0, column: 0 },
-      {
-        crypto,
-        fs,
-        net,
-        path,
-        shell: {
-          showItemInFolder(value) {
-            revealed.push(value);
-          },
-          openPath: async () => "",
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const file = windowsPath.join(assets, "A.asset");
+  const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({ files: [file, version], directories: [assets] });
+  const revealed = [];
+  const result = await __test.handleOpenAsset(
+    { path: file, line: 0, column: 0 },
+    {
+      crypto,
+      fs: fsApi,
+      net,
+      path: windowsPath,
+      shell: {
+        showItemInFolder(value) {
+          revealed.push(value);
         },
-        log: { warn() {} },
-        sendPipeRequest: async () => {
-          throw new Error("unavailable");
-        },
+        openPath: async () => "",
       },
-    );
-    assert.equal(result.code, "unityUnavailable");
-    assert.deepEqual(revealed, [fs.realpathSync(file)]);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+      log: { warn() {} },
+      sendPipeRequest: async () => {
+        throw new Error("unavailable");
+      },
+    },
+  );
+
+  assert.equal(result.code, "unityUnavailable");
+  assert.deepEqual(revealed, [file]);
 });
 
 test("renderer captures one eligible Assets link and cleans up", async () => {
   const listeners = new Map();
   const anchor = {
     getAttribute() {
-      return "D:/workspace/sgproj/Assets/Light.prefab";
+      return "D:/Projects/ExampleUnityProject/Assets/Light.prefab";
     },
   };
   const documentApi = {
@@ -281,7 +289,7 @@ test("renderer captures Codex file-reference buttons", async () => {
   const button = {
     getAttribute(name) {
       if (name === "data-prompt-link-href") {
-        return "D:/workspace/sgproj/Assets/Light.prefab";
+        return "D:/Projects/ExampleUnityProject/Assets/Light.prefab";
       }
       return null;
     },
@@ -332,7 +340,7 @@ test("renderer captures Codex file-reference buttons", async () => {
 
   assert.equal(event.defaultPrevented, true);
   assert.deepEqual(opened, [{
-    path: "D:\\workspace\\sgproj\\Assets\\Light.prefab",
+    path: "D:\\Projects\\ExampleUnityProject\\Assets\\Light.prefab",
     line: 0,
     column: 0,
   }]);
@@ -344,7 +352,7 @@ test("renderer replays Codex behavior when main declines the path", async () => 
   const anchor = {
     clicks: 0,
     getAttribute() {
-      return "D:/workspace/sgproj/Assets/Folder";
+      return "D:/Projects/ExampleUnityProject/Assets/Folder";
     },
     click() {
       this.clicks += 1;

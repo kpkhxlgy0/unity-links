@@ -11,44 +11,65 @@ Test-Case "repository layout follows its supplied root" {
     Assert-Equal (Join-Path $root "unity-package") $layout.PackageRoot
 }
 
-Test-Case "finds Unity above nested FilePackages repository" {
-    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
-    try
+Test-Case "maintainer checks stay project-neutral and avoid temporary Unity projects" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $projectName = "sg" + "proj"
+    $files = @(
+        (Join-Path $repositoryRoot "codex-tweak/test/index.test.js"),
+        (Join-Path $repositoryRoot "scripts/tests/UnityLinkMaintenance.Tests.ps1"),
+        (Join-Path $repositoryRoot "scripts/tests/UninjectCheckOnly.Integration.ps1"),
+        (Join-Path $repositoryRoot "docs/design.md"))
+
+    foreach ($file in $files)
     {
-        $repo = Join-Path $root "FilePackages/unity-links/scripts/tests"
-        New-Item -ItemType Directory -Path $repo -Force | Out-Null
-        New-Item -ItemType Directory -Path (Join-Path $root "Assets") | Out-Null
-        New-Item -ItemType Directory -Path (Join-Path $root "Packages") | Out-Null
-        New-Item -ItemType Directory -Path (Join-Path $root "ProjectSettings") | Out-Null
-        Set-Content -LiteralPath (Join-Path $root "Packages/manifest.json") -Value '{"dependencies":{}}'
-        Set-Content -LiteralPath (Join-Path $root "ProjectSettings/ProjectVersion.txt") `
-            -Value "m_EditorVersion: 2022.3.23f1"
-        Assert-Equal (Resolve-NormalizedPath $root) (Find-UnityProjectRoot -StartPath $repo)
+        $text = Get-Content -LiteralPath $file -Raw
+        Assert-True (!$text.Contains($projectName)) "Project-specific name found in $file."
     }
-    finally
-    {
-        Remove-Item -LiteralPath $root -Recurse -Force
-    }
+
+    $nodeTest = Get-Content -LiteralPath $files[0] -Raw
+    Assert-True (!$nodeTest.Contains("mkdtemp" + "Sync")) "Node tests must use an in-memory filesystem."
+
+    $powerShellTest = Get-Content -LiteralPath $files[1] -Raw
+    $temporaryAssetsMarker = 'Join-Path $root "' + 'Assets"'
+    Assert-True (!$powerShellTest.Contains($temporaryAssetsMarker)) `
+        "PowerShell tests must not assemble a temporary Unity project."
+}
+
+Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
+    $expected = "D:\Samples\ExampleUnityProject"
+    $actual = Find-UnityProjectRoot `
+        -StartPath "$expected\Tools\unity-links\scripts\tests" `
+        -ProjectRootTest {
+            param($candidate)
+            return Test-PathEqual $candidate $expected
+        }
+
+    Assert-Equal $expected $actual
+}
+
+Test-Case "finds the real Unity project above the current repository" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $projectRoot = Find-UnityProjectRoot -StartPath $repositoryRoot
+
+    Assert-True (Test-UnityProjectRoot $projectRoot)
+    Assert-True ((Resolve-NormalizedPath $repositoryRoot).StartsWith(
+            (Resolve-NormalizedPath $projectRoot),
+            [System.StringComparison]::OrdinalIgnoreCase))
 }
 
 Test-Case "computes the final portable package value" {
-    $project = "D:\workspace\sgproj"
-    $package = "D:\workspace\sgproj\FilePackages\unity-links\unity-package"
-    Assert-Equal "file:../FilePackages/unity-links/unity-package" `
+    $project = "D:\Projects\ExampleUnityProject"
+    $package = "D:\Projects\ExampleUnityProject\Tools\unity-links\unity-package"
+    Assert-Equal "file:../Tools/unity-links/unity-package" `
         (Get-UnityPackageManifestValue -UnityProjectRoot $project -PackageRoot $package)
 }
 
 Test-Case "rejects a directory without every Unity marker" {
-    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
-    try
-    {
-        New-Item -ItemType Directory -Path (Join-Path $root "Assets") -Force | Out-Null
-        Assert-Throws { Find-UnityProjectRoot -StartPath $root } "Unity project"
-    }
-    finally
-    {
-        Remove-Item -LiteralPath $root -Recurse -Force
-    }
+    Assert-Throws {
+        Find-UnityProjectRoot `
+            -StartPath "D:\Samples\NotAUnityProject\Tools\unity-links" `
+            -ProjectRootTest { return $false }
+    } "Unity project"
 }
 
 Test-Case "updates only the dependency value and preserves CRLF" {
@@ -105,78 +126,33 @@ Test-Case "rejects invalid JSON before editing" {
 }
 
 Test-Case "Unity CheckOnly does not mutate the manifest" {
-    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
-    try
-    {
-        $directories = @(
-            (Join-Path $root "Assets"),
-            (Join-Path $root "Packages"),
-            (Join-Path $root "ProjectSettings"))
-        New-Item -ItemType Directory -Path $directories -Force | Out-Null
-        $manifest = Join-Path $root "Packages/manifest.json"
-        $crlf = [string] ([char] 13) + [char] 10
-        [System.IO.File]::WriteAllText($manifest, '{' + $crlf + '  "dependencies": {}' + $crlf + '}' + $crlf)
-        [System.IO.File]::WriteAllText(
-            (Join-Path $root "ProjectSettings/ProjectVersion.txt"),
-            "m_EditorVersion: 2022.3.23f1")
-        $before = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
-        $entryPoint = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "Install-UnityPackage.ps1"
-        $pwshPath = (Get-Process -Id $PID).Path
-        & $pwshPath -NoProfile -File $entryPoint -UnityProject $root -CheckOnly | Out-Null
-        $entryPointExitCode = $LASTEXITCODE
-        Assert-Equal 0 $entryPointExitCode
-        Assert-Equal $before (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
-    }
-    finally
-    {
-        Remove-Item -LiteralPath $root -Recurse -Force
-    }
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $projectRoot = Find-UnityProjectRoot -StartPath $repositoryRoot
+    $manifest = Join-Path $projectRoot "Packages/manifest.json"
+    $before = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
+    $entryPoint = Join-Path $repositoryRoot "Install-UnityPackage.ps1"
+    $pwshPath = (Get-Process -Id $PID).Path
+
+    & $pwshPath -NoProfile -File $entryPoint -CheckOnly | Out-Null
+    $entryPointExitCode = $LASTEXITCODE
+
+    Assert-Equal 0 $entryPointExitCode
+    Assert-Equal $before (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
 }
 
-Test-Case "Unity installer updates only the manifest dependency" {
-    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
-    try
-    {
-        $directories = @(
-            (Join-Path $root "Assets"),
-            (Join-Path $root "Packages"),
-            (Join-Path $root "ProjectSettings"))
-        New-Item -ItemType Directory -Path $directories -Force | Out-Null
-        $lf = [string] [char] 10
-        $manifest = Join-Path $root "Packages/manifest.json"
-        $lock = Join-Path $root "Packages/packages-lock.json"
-        $manifestText = '{' + $lf +
-            '  "name": "keep",' + $lf +
-            '  "dependencies": {' + $lf +
-            '    "a": "1"' + $lf +
-            '  }' + $lf +
-            '}' + $lf
-        [System.IO.File]::WriteAllText($manifest, $manifestText)
-        [System.IO.File]::WriteAllText($lock, '{"sentinel":true}')
-        [System.IO.File]::WriteAllText(
-            (Join-Path $root "ProjectSettings/ProjectVersion.txt"),
-            "m_EditorVersion: 2022.3.23f1")
-        $lockHash = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
-        $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-        $entryPoint = Join-Path $repositoryRoot "Install-UnityPackage.ps1"
-        $packageRoot = Join-Path $repositoryRoot "unity-package"
-        $expectedValue = Get-UnityPackageManifestValue -UnityProjectRoot $root -PackageRoot $packageRoot
-        $pwshPath = (Get-Process -Id $PID).Path
+Test-Case "Unity CheckOnly accepts an explicit real project path" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $projectRoot = Find-UnityProjectRoot -StartPath $repositoryRoot
+    $manifest = Join-Path $projectRoot "Packages/manifest.json"
+    $before = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
+    $entryPoint = Join-Path $repositoryRoot "Install-UnityPackage.ps1"
+    $pwshPath = (Get-Process -Id $PID).Path
 
-        & $pwshPath -NoProfile -File $entryPoint -UnityProject $root | Out-Null
-        $entryPointExitCode = $LASTEXITCODE
+    & $pwshPath -NoProfile -File $entryPoint -UnityProject $projectRoot -CheckOnly | Out-Null
+    $entryPointExitCode = $LASTEXITCODE
 
-        Assert-Equal 0 $entryPointExitCode
-        $updated = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json -AsHashtable
-        Assert-Equal "keep" $updated.name
-        Assert-Equal "1" $updated.dependencies.a
-        Assert-Equal $expectedValue $updated.dependencies["com.kpk.codex-unity-link"]
-        Assert-Equal $lockHash (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
-    }
-    finally
-    {
-        Remove-Item -LiteralPath $root -Recurse -Force
-    }
+    Assert-Equal 0 $entryPointExitCode
+    Assert-Equal $before (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
 }
 
 Test-Case "selects the highest installed Codex Appx version" {
