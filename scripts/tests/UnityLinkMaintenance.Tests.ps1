@@ -328,4 +328,54 @@ Test-Case "recognizes and repairs a junction whose old target disappeared" {
     }
 }
 
+Test-Case "requires pinned install when Codex++ is missing" {
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion $null -NodeMajor 22 -HasNpm $true `
+        -TargetMirrorRunning $false
+    Assert-Equal "InstallRequired" $state.Status
+}
+
+Test-Case "keeps an existing compatible Codex++ without downgrade" {
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.1.0") -NodeMajor 22 -HasNpm $true `
+        -TargetMirrorRunning $false
+    Assert-Equal "Current" $state.Status
+}
+
+Test-Case "blocks installation without prerequisites" {
+    $oldNode = Get-CodexPlusPlusInstallState -InstalledVersion $null -NodeMajor 18 -HasNpm $true `
+        -TargetMirrorRunning $false
+    $missingNpm = Get-CodexPlusPlusInstallState -InstalledVersion $null -NodeMajor 22 -HasNpm $false `
+        -TargetMirrorRunning $false
+    Assert-Equal "Blocked" $oldNode.Status
+    Assert-Equal "Blocked" $missingNpm.Status
+}
+
+Test-Case "blocks first injection when its exact managed mirror is running" {
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion $null -NodeMajor 22 -HasNpm $true `
+        -TargetMirrorRunning $true
+    Assert-Equal "Blocked" $state.Status
+}
+
+Test-Case "validates only the pinned Codex++ source layout" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        New-Item -ItemType Directory -Path (Join-Path $root "packages/installer/src") -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.0"}')
+        [System.IO.File]::WriteAllText((Join-Path $root "package-lock.json"), '{}')
+        [System.IO.File]::WriteAllText((Join-Path $root "packages/installer/src/cli.ts"), "export {};")
+        Assert-True (Test-CodexPlusPlusSourceLayout -SourceRoot $root)
+        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.1"}')
+        Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.0"
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "refuses to overwrite a retained previous source during swap" {
+    Assert-Equal "Ready" (Get-CodexPlusPlusSourceSwapState -SourceExists $true -PreviousExists $false).Status
+    Assert-Equal "Blocked" (Get-CodexPlusPlusSourceSwapState -SourceExists $true -PreviousExists $true).Status
+}
+
 Complete-Tests

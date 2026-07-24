@@ -411,6 +411,97 @@ function Set-TweakJunction
     return $true
 }
 
+function Get-CodexPlusPlusInstallState
+{
+    [CmdletBinding()]
+    param(
+        [AllowNull()] [version] $InstalledVersion,
+        [int] $NodeMajor,
+        [bool] $HasNpm,
+        [bool] $TargetMirrorRunning)
+
+    if ($null -ne $InstalledVersion -and $InstalledVersion -ge [version] "1.0.0")
+    {
+        return [pscustomobject] @{
+            Status = "Current"
+            Reason = "Compatible Codex++ is already installed."
+        }
+    }
+    if ($NodeMajor -lt 20)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "Node.js 20 or newer is required."
+        }
+    }
+    if (!$HasNpm)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "npm is required."
+        }
+    }
+    if ($TargetMirrorRunning)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            Reason = "The target Codex++ mirror is running."
+        }
+    }
+    return [pscustomobject] @{
+        Status = "InstallRequired"
+        Reason = "Codex++ is not installed or is older than 1.0.0."
+    }
+}
+
+function Test-CodexPlusPlusSourceLayout
+{
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $SourceRoot)
+
+    $root = Resolve-NormalizedPath $SourceRoot
+    $requiredPaths = @(
+        (Join-Path $root "package.json"),
+        (Join-Path $root "package-lock.json"),
+        (Join-Path $root "packages/installer/src/cli.ts"))
+    foreach ($path in $requiredPaths)
+    {
+        if (!(Test-Path -LiteralPath $path -PathType Leaf))
+        {
+            throw "Codex++ source file is missing: $path"
+        }
+    }
+
+    $package = Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json
+    if ([version] $package.version -ne [version] "1.0.0")
+    {
+        throw "Expected Codex++ source version 1.0.0, found $($package.version)."
+    }
+    return $true
+}
+
+function Get-CodexPlusPlusSourceSwapState
+{
+    [CmdletBinding()]
+    param(
+        [bool] $SourceExists,
+        [bool] $PreviousExists)
+
+    if ($PreviousExists)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            HasCurrentSource = $SourceExists
+            Reason = "A retained .previous Codex++ source already exists."
+        }
+    }
+    return [pscustomobject] @{
+        Status = "Ready"
+        HasCurrentSource = $SourceExists
+        Reason = "Source swap can retain the current source safely."
+    }
+}
+
 Export-ModuleMember -Function @(
     "Resolve-NormalizedPath",
     "Test-PathEqual",
@@ -424,4 +515,7 @@ Export-ModuleMember -Function @(
     "Test-PathInside",
     "Get-CodexMaintenanceState",
     "Get-TweakLinkState",
-    "Set-TweakJunction")
+    "Set-TweakJunction",
+    "Get-CodexPlusPlusInstallState",
+    "Test-CodexPlusPlusSourceLayout",
+    "Get-CodexPlusPlusSourceSwapState")
