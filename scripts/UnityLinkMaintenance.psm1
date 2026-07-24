@@ -680,7 +680,7 @@ function Get-CodexLauncherState
     param(
         [Parameter(Mandatory)] [string] $ExpectedExecutable,
         [Parameter(Mandatory)] [string] $CommandPath,
-        [Parameter(Mandatory)] [string[]] $ShortcutPaths)
+        [Parameter(Mandatory)] [string] $StartMenuShortcutPath)
 
     $expected = Resolve-NormalizedPath $ExpectedExecutable
     $mismatches = [System.Collections.Generic.List[string]]::new()
@@ -691,18 +691,18 @@ function Get-CodexLauncherState
         $mismatches.Add((Resolve-NormalizedPath $CommandPath))
     }
 
-    $shell = New-Object -ComObject WScript.Shell
-    foreach ($shortcutPath in $ShortcutPaths)
+    $normalizedShortcut = Resolve-NormalizedPath $StartMenuShortcutPath
+    if (!(Test-Path -LiteralPath $normalizedShortcut -PathType Leaf))
     {
-        if (!(Test-Path -LiteralPath $shortcutPath -PathType Leaf))
-        {
-            $mismatches.Add((Resolve-NormalizedPath $shortcutPath))
-            continue
-        }
-        $target = $shell.CreateShortcut($shortcutPath).TargetPath
+        $mismatches.Add($normalizedShortcut)
+    }
+    else
+    {
+        $shell = New-Object -ComObject WScript.Shell
+        $target = $shell.CreateShortcut($normalizedShortcut).TargetPath
         if (!$target -or !(Test-PathEqual $target $expected))
         {
-            $mismatches.Add((Resolve-NormalizedPath $shortcutPath))
+            $mismatches.Add($normalizedShortcut)
         }
     }
 
@@ -719,7 +719,7 @@ function Set-CodexLauncherArtifacts
     param(
         [Parameter(Mandatory)] [string] $ExpectedExecutable,
         [Parameter(Mandatory)] [string] $CommandPath,
-        [Parameter(Mandatory)] [string[]] $ShortcutPaths)
+        [Parameter(Mandatory)] [string] $StartMenuShortcutPath)
 
     $expected = Resolve-NormalizedPath $ExpectedExecutable
     if (!(Test-Path -LiteralPath $expected -PathType Leaf))
@@ -727,7 +727,7 @@ function Set-CodexLauncherArtifacts
         throw "Codex launch executable not found: $expected"
     }
     $state = Get-CodexLauncherState -ExpectedExecutable $expected -CommandPath $CommandPath `
-        -ShortcutPaths $ShortcutPaths
+        -StartMenuShortcutPath $StartMenuShortcutPath
     if ($state.Status -eq "Current") { return $false }
 
     $commandParent = Split-Path (Resolve-NormalizedPath $CommandPath) -Parent
@@ -739,22 +739,58 @@ function Set-CodexLauncherArtifacts
         $encoding)
 
     $shell = New-Object -ComObject WScript.Shell
-    foreach ($shortcutPath in $ShortcutPaths)
-    {
-        $normalizedShortcut = Resolve-NormalizedPath $shortcutPath
-        New-Item -ItemType Directory -Path (Split-Path $normalizedShortcut -Parent) -Force | Out-Null
-        $shortcut = $shell.CreateShortcut($normalizedShortcut)
-        $shortcut.TargetPath = $expected
-        $shortcut.WorkingDirectory = Split-Path $expected -Parent
-        $shortcut.IconLocation = "$expected,0"
-        $shortcut.Save()
-    }
+    $normalizedShortcut = Resolve-NormalizedPath $StartMenuShortcutPath
+    New-Item -ItemType Directory -Path (Split-Path $normalizedShortcut -Parent) -Force | Out-Null
+    $shortcut = $shell.CreateShortcut($normalizedShortcut)
+    $shortcut.TargetPath = $expected
+    $shortcut.WorkingDirectory = Split-Path $expected -Parent
+    $shortcut.IconLocation = "$expected,0"
+    $shortcut.Save()
 
     $verified = Get-CodexLauncherState -ExpectedExecutable $expected -CommandPath $CommandPath `
-        -ShortcutPaths $ShortcutPaths
+        -StartMenuShortcutPath $StartMenuShortcutPath
     if ($verified.Status -ne "Current")
     {
         throw "Codex++ launcher verification failed: $($verified.Mismatches -join ', ')"
+    }
+    return $true
+}
+
+function Remove-ManagedCodexDesktopShortcut
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $DesktopShortcutPath,
+        [Parameter(Mandatory)] [string] $ManagedStoreRoot)
+
+    $shortcutPath = Resolve-NormalizedPath $DesktopShortcutPath
+    if ([System.IO.Path]::GetExtension($shortcutPath) -ine ".lnk")
+    {
+        throw "Expected a .lnk desktop shortcut path: $shortcutPath"
+    }
+    if (!(Test-Path -LiteralPath $shortcutPath -PathType Leaf)) { return $false }
+
+    try
+    {
+        $shell = New-Object -ComObject WScript.Shell
+        $target = [string] $shell.CreateShortcut($shortcutPath).TargetPath
+    }
+    catch
+    {
+        Write-Warning "Could not inspect the legacy Codex++ desktop shortcut; it was preserved: $shortcutPath"
+        return $false
+    }
+
+    if (!$target -or !(Test-PathInside -Path $target -Root $ManagedStoreRoot))
+    {
+        Write-Warning "The Codex++ desktop shortcut is not managed by this installation and was preserved: $shortcutPath"
+        return $false
+    }
+
+    Remove-Item -LiteralPath $shortcutPath -Force
+    if (Test-Path -LiteralPath $shortcutPath)
+    {
+        throw "The managed Codex++ desktop shortcut still exists after removal: $shortcutPath"
     }
     return $true
 }
@@ -782,4 +818,5 @@ Export-ModuleMember -Function @(
     "Get-CodexUninstallArguments",
     "Remove-TweakLink",
     "Get-CodexLauncherState",
-    "Set-CodexLauncherArtifacts")
+    "Set-CodexLauncherArtifacts",
+    "Remove-ManagedCodexDesktopShortcut")

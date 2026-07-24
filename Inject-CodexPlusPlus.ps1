@@ -47,7 +47,7 @@ function Get-LiveMaintenanceContext
         [Parameter(Mandatory)] [string] $ExpectedTweakPath,
         [Parameter(Mandatory)] [string] $ExpectedLaunchExecutable,
         [Parameter(Mandatory)] [string] $LauncherCommandPath,
-        [Parameter(Mandatory)] [string[]] $ShortcutPaths)
+        [Parameter(Mandatory)] [string] $StartMenuShortcutPath)
 
     $codexState = Read-CodexPlusPlusState -Path $StatePath
     $statusText = ""
@@ -57,7 +57,7 @@ function Get-LiveMaintenanceContext
     }
     $linkState = Get-TweakLinkState -LinkPath $LinkPath -ExpectedTarget $ExpectedTweakPath
     $launcherState = Get-CodexLauncherState -ExpectedExecutable $ExpectedLaunchExecutable `
-        -CommandPath $LauncherCommandPath -ShortcutPaths $ShortcutPaths
+        -CommandPath $LauncherCommandPath -StartMenuShortcutPath $StartMenuShortcutPath
     $runningPaths = Get-CodexExecutablePaths
     $maintenanceState = Get-CodexMaintenanceState `
         -AppLayout $AppLayout `
@@ -80,7 +80,6 @@ try
 {
     if (!$env:APPDATA) { throw "APPDATA is not available." }
     if (!$env:LOCALAPPDATA) { throw "LOCALAPPDATA is not available." }
-    if (!$env:USERPROFILE) { throw "USERPROFILE is not available." }
 
     $expectedTweakPath = Join-Path $PSScriptRoot "codex-tweak"
     $tweakManifestPath = Join-Path $expectedTweakPath "manifest.json"
@@ -109,9 +108,12 @@ try
     $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
     $linkPath = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
     $launcherCommandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
-    $shortcutPaths = @(
-        (Join-Path $env:USERPROFILE "Desktop/Codex++.lnk"),
-        (Join-Path $env:APPDATA "Microsoft/Windows/Start Menu/Programs/Codex++.lnk"))
+    $programsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+    if (!$programsPath) { throw "The current user's Start Menu Programs folder is unavailable." }
+    $startMenuShortcutPath = Join-Path $programsPath "Codex++.lnk"
+    $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+    $desktopShortcutPath = if ($desktopPath) { Join-Path $desktopPath "Codex++.lnk" } else { $null }
+    $managedStoreRoot = Join-Path $env:LOCALAPPDATA "codex-plusplus/store-apps"
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
         -AppLayout $appLayout `
@@ -120,7 +122,7 @@ try
         -ExpectedTweakPath $expectedTweakPath `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
-        -ShortcutPaths $shortcutPaths
+        -StartMenuShortcutPath $startMenuShortcutPath
 
     Write-Host "Status: $($context.MaintenanceState.Status)"
     Write-Host "Codex++: $version"
@@ -165,7 +167,7 @@ try
         -ExpectedTweakPath $expectedTweakPath `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
-        -ShortcutPaths $shortcutPaths
+        -StartMenuShortcutPath $startMenuShortcutPath
     if ($context.MaintenanceState.InjectionRequired)
     {
         throw "Codex++ repair completed but the latest managed mirror is not current."
@@ -176,7 +178,14 @@ try
     }
 
     $launcherChanged = Set-CodexLauncherArtifacts -ExpectedExecutable $launchLayout.MirrorExecutable `
-        -CommandPath $launcherCommandPath -ShortcutPaths $shortcutPaths
+        -CommandPath $launcherCommandPath -StartMenuShortcutPath $startMenuShortcutPath
+    if ($desktopShortcutPath)
+    {
+        $desktopShortcutRemoved = Remove-ManagedCodexDesktopShortcut `
+            -DesktopShortcutPath $desktopShortcutPath `
+            -ManagedStoreRoot $managedStoreRoot
+        if ($desktopShortcutRemoved) { Write-Host "Removed the legacy managed desktop shortcut." }
+    }
     $linkChanged = Set-TweakJunction -LinkPath $linkPath -ExpectedTarget $expectedTweakPath
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
@@ -186,7 +195,7 @@ try
         -ExpectedTweakPath $expectedTweakPath `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
-        -ShortcutPaths $shortcutPaths
+        -StartMenuShortcutPath $startMenuShortcutPath
     if ($context.MaintenanceState.Status -ne "Current")
     {
         throw "Maintenance verification failed with status: $($context.MaintenanceState.Status)"

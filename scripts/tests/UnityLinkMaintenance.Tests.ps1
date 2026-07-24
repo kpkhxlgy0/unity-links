@@ -35,6 +35,17 @@ Test-Case "maintainer checks stay project-neutral and avoid temporary Unity proj
         "PowerShell tests must not assemble a temporary Unity project."
 }
 
+Test-Case "inject entry point uses Start Menu Known Folder without a desktop launcher requirement" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $injectText = Get-Content -LiteralPath (Join-Path $repositoryRoot "Inject-CodexPlusPlus.ps1") -Raw
+    $legacyParameter = "Shortcut" + "Paths"
+    $profileDesktop = '$env:USER' + 'PROFILE "Desktop'
+
+    Assert-True ($injectText.Contains("[Environment+SpecialFolder]::Programs"))
+    Assert-True (!$injectText.Contains($legacyParameter))
+    Assert-True (!$injectText.Contains($profileDesktop))
+}
+
 Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
     $expected = "D:\Samples\ExampleUnityProject"
     $actual = Find-UnityProjectRoot `
@@ -495,24 +506,99 @@ Test-Case "classifies a stale Codex++ launcher as LauncherRequired" {
     Assert-Equal "LauncherRequired" (Get-CodexMaintenanceState @parameters).Status
 }
 
-Test-Case "writes Codex++ launchers for the manifest-declared executable" {
+Test-Case "writes CMD and Start Menu launchers without requiring a desktop shortcut" {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
     try
     {
         $executable = Join-Path $root "mirror/app/ChatGPT.exe"
         $commandPath = Join-Path $root "WindowsApps/codex-plusplus-codex.cmd"
-        $shortcutPaths = @(
-            (Join-Path $root "Desktop/Codex++.lnk"),
-            (Join-Path $root "Start Menu/Codex++.lnk"))
+        $desktopShortcutPath = Join-Path $root "Desktop/Codex++.lnk"
+        $startMenuShortcutPath = Join-Path $root "Start Menu/Codex++.lnk"
         New-Item -ItemType Directory -Path (Split-Path $executable -Parent) -Force | Out-Null
         [System.IO.File]::WriteAllText($executable, "desktop")
 
         Assert-True (Set-CodexLauncherArtifacts -ExpectedExecutable $executable -CommandPath $commandPath `
-            -ShortcutPaths $shortcutPaths)
+            -StartMenuShortcutPath $startMenuShortcutPath)
         Assert-Equal "Current" (Get-CodexLauncherState -ExpectedExecutable $executable `
-            -CommandPath $commandPath -ShortcutPaths $shortcutPaths).Status
+            -CommandPath $commandPath -StartMenuShortcutPath $startMenuShortcutPath).Status
+        Assert-True (!(Test-Path -LiteralPath $desktopShortcutPath))
         Assert-True (!(Set-CodexLauncherArtifacts -ExpectedExecutable $executable -CommandPath $commandPath `
-            -ShortcutPaths $shortcutPaths))
+            -StartMenuShortcutPath $startMenuShortcutPath))
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "requires launcher repair when the Start Menu shortcut is missing" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $executable = Join-Path $root "mirror/app/ChatGPT.exe"
+        $commandPath = Join-Path $root "WindowsApps/codex-plusplus-codex.cmd"
+        $startMenuShortcutPath = Join-Path $root "Start Menu/Codex++.lnk"
+        New-Item -ItemType Directory -Path (Split-Path $executable -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($executable, "desktop")
+        Set-CodexLauncherArtifacts -ExpectedExecutable $executable -CommandPath $commandPath `
+            -StartMenuShortcutPath $startMenuShortcutPath | Out-Null
+        Remove-Item -LiteralPath $startMenuShortcutPath -Force
+
+        $state = Get-CodexLauncherState -ExpectedExecutable $executable -CommandPath $commandPath `
+            -StartMenuShortcutPath $startMenuShortcutPath
+
+        Assert-Equal "Required" $state.Status
+        Assert-True ($state.Mismatches -contains (Resolve-NormalizedPath $startMenuShortcutPath))
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "removes a legacy desktop shortcut targeting the managed mirror store" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $managedStoreRoot = Join-Path $root "codex-plusplus/store-apps"
+        $executable = Join-Path $managedStoreRoot "OpenAI.Codex_test/app/ChatGPT.exe"
+        $desktopShortcutPath = Join-Path $root "Desktop/Codex++.lnk"
+        New-Item -ItemType Directory -Path (Split-Path $executable -Parent) -Force | Out-Null
+        New-Item -ItemType Directory -Path (Split-Path $desktopShortcutPath -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($executable, "desktop")
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($desktopShortcutPath)
+        $shortcut.TargetPath = $executable
+        $shortcut.Save()
+
+        Assert-True (Remove-ManagedCodexDesktopShortcut -DesktopShortcutPath $desktopShortcutPath `
+            -ManagedStoreRoot $managedStoreRoot)
+        Assert-True (!(Test-Path -LiteralPath $desktopShortcutPath))
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "preserves an unrelated desktop shortcut with the same name" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $managedStoreRoot = Join-Path $root "codex-plusplus/store-apps"
+        $executable = Join-Path $root "OtherApp/ChatGPT.exe"
+        $desktopShortcutPath = Join-Path $root "Desktop/Codex++.lnk"
+        New-Item -ItemType Directory -Path (Split-Path $executable -Parent) -Force | Out-Null
+        New-Item -ItemType Directory -Path (Split-Path $desktopShortcutPath -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($executable, "desktop")
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($desktopShortcutPath)
+        $shortcut.TargetPath = $executable
+        $shortcut.Save()
+
+        Assert-True (!(Remove-ManagedCodexDesktopShortcut -DesktopShortcutPath $desktopShortcutPath `
+                    -ManagedStoreRoot $managedStoreRoot -WarningAction SilentlyContinue))
+        Assert-True (Test-Path -LiteralPath $desktopShortcutPath -PathType Leaf)
     }
     finally
     {
