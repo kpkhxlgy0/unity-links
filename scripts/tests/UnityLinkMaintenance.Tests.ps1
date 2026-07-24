@@ -73,6 +73,8 @@ Test-Case "README covers project-neutral first install and relocation" {
         "PowerShell 7",
         "Node.js 20",
         "npm",
+        'New-Item -ItemType Directory -Path (Join-Path $unityProject "Tools")',
+        "New-Item -ItemType Directory -Path D:\Tools",
         "-UnityProject",
         "开始菜单",
         "移动仓库",

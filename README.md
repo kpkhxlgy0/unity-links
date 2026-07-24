@@ -26,6 +26,7 @@ Prefab 会沿用 Unity 的 Prefab 打开逻辑，注册了自定义编辑器的 
 
 ```powershell
 $unityProject = "D:\Projects\ExampleUnityProject"
+New-Item -ItemType Directory -Path (Join-Path $unityProject "Tools") -Force | Out-Null
 git clone https://github.com/kpkhxlgy0/unity-links.git (Join-Path $unityProject "Tools/unity-links")
 Set-Location (Join-Path $unityProject "Tools/unity-links")
 ```
@@ -38,6 +39,7 @@ Set-Location (Join-Path $unityProject "Tools/unity-links")
 适合用一个稳定仓库服务多个 Unity 项目。此时每个项目都显式传入路径：
 
 ```powershell
+New-Item -ItemType Directory -Path D:\Tools -Force | Out-Null
 git clone https://github.com/kpkhxlgy0/unity-links.git D:\Tools\unity-links
 Set-Location D:\Tools\unity-links
 pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\Projects\ExampleUnityProject
