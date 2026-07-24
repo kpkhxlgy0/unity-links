@@ -1,0 +1,10 @@
+{
+  "name": "com.kpk.codex-unity-link",
+  "version": "0.1.0",
+  "displayName": "KPK Codex Unity Link",
+  "description": "Opens Codex Desktop asset links in the matching Unity Editor.",
+  "unity": "2022.3",
+  "author": {
+    "name": "KPK"
+  }
+}
