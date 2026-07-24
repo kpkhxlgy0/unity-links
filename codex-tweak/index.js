@@ -297,11 +297,16 @@ function startRenderer(api, documentApi) {
   stopRenderer();
   const onClick = (event) => {
     if (!isEligibleClick(event)) return;
-    const anchor = event.target && event.target.closest
+    const link = event.target && event.target.closest
       ? event.target.closest("a[href]")
+        || event.target.closest('[data-file-reference="true"][data-prompt-link-href]')
       : null;
-    if (!anchor || replayBypass.has(anchor)) return;
-    const parsed = parseDestination(anchor.getAttribute("href") || anchor.href);
+    if (!link || replayBypass.has(link)) return;
+    const parsed = parseDestination(
+      link.getAttribute("href")
+        || link.getAttribute("data-prompt-link-href")
+        || link.href,
+    );
     if (!parsed || !hasAssetsSegment(parsed.path)) return;
 
     event.preventDefault();
@@ -309,7 +314,7 @@ function startRenderer(api, documentApi) {
     void api.ipc.invoke("open-asset", parsed)
       .then((result) => {
         if (!result || result.handled === false) {
-          replayOriginalClick(anchor);
+          replayOriginalClick(link);
           return;
         }
         if (!result.ok) {

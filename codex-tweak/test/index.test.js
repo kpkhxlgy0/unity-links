@@ -276,6 +276,69 @@ test("renderer captures one eligible Assets link and cleans up", async () => {
   assert.equal(listeners.has("click"), false);
 });
 
+test("renderer captures Codex file-reference buttons", async () => {
+  const listeners = new Map();
+  const button = {
+    getAttribute(name) {
+      if (name === "data-prompt-link-href") {
+        return "D:/workspace/sgproj/Assets/Light.prefab";
+      }
+      return null;
+    },
+  };
+  const documentApi = {
+    body: { append() {} },
+    addEventListener(name, handler) {
+      listeners.set(name, handler);
+    },
+    removeEventListener() {},
+    createElement() {
+      return { dataset: {}, style: {}, remove() {} };
+    },
+  };
+  const opened = [];
+  __test.startRenderer(
+    {
+      ipc: {
+        invoke: async (_channel, destination) => {
+          opened.push(destination);
+          return { ok: true, handled: true, code: "opened" };
+        },
+      },
+    },
+    documentApi,
+  );
+  const event = {
+    button: 0,
+    defaultPrevented: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    target: {
+      closest(selector) {
+        if (selector === '[data-file-reference="true"][data-prompt-link-href]') return button;
+        return null;
+      },
+    },
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopImmediatePropagation() {},
+  };
+
+  listeners.get("click")(event);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(opened, [{
+    path: "D:\\workspace\\sgproj\\Assets\\Light.prefab",
+    line: 0,
+    column: 0,
+  }]);
+  __test.stopRenderer();
+});
+
 test("renderer replays Codex behavior when main declines the path", async () => {
   const listeners = new Map();
   const anchor = {
