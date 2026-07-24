@@ -191,3 +191,97 @@ test("reveals an asset when the matching Unity Pipe is unavailable", async () =>
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("renderer captures one eligible Assets link and cleans up", async () => {
+  const listeners = new Map();
+  const anchor = {
+    getAttribute() {
+      return "D:/workspace/sgproj/Assets/Light.prefab";
+    },
+  };
+  const documentApi = {
+    body: { append() {} },
+    addEventListener(name, handler) {
+      listeners.set(name, handler);
+    },
+    removeEventListener(name) {
+      listeners.delete(name);
+    },
+    createElement() {
+      return {
+        dataset: {},
+        style: {},
+        remove() {},
+      };
+    },
+  };
+  const api = {
+    ipc: {
+      invoke: async () => ({ ok: true, handled: true, code: "opened" }),
+    },
+  };
+  __test.startRenderer(api, documentApi);
+  const event = {
+    button: 0,
+    defaultPrevented: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    target: { closest: () => anchor },
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopImmediatePropagation() {},
+  };
+  listeners.get("click")(event);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(event.defaultPrevented, true);
+  __test.stopRenderer();
+  assert.equal(listeners.has("click"), false);
+});
+
+test("renderer replays Codex behavior when main declines the path", async () => {
+  const listeners = new Map();
+  const anchor = {
+    clicks: 0,
+    getAttribute() {
+      return "D:/workspace/sgproj/Assets/Folder";
+    },
+    click() {
+      this.clicks += 1;
+    },
+  };
+  const documentApi = {
+    body: { append() {} },
+    addEventListener(name, handler) {
+      listeners.set(name, handler);
+    },
+    removeEventListener() {},
+    createElement() {
+      return { dataset: {}, style: {}, remove() {} };
+    },
+  };
+  __test.startRenderer(
+    { ipc: { invoke: async () => ({ ok: false, handled: false }) } },
+    documentApi,
+  );
+  const event = {
+    button: 0,
+    defaultPrevented: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    target: { closest: () => anchor },
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopImmediatePropagation() {},
+  };
+  listeners.get("click")(event);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(anchor.clicks, 1);
+  __test.stopRenderer();
+});

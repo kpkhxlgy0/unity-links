@@ -1,5 +1,7 @@
 const PIPE_PREFIX = "kpk-codex-unity-link-v1-";
 let rendererCleanup;
+const replayBypass = new WeakSet();
+const notices = new Set();
 
 function parseDestination(raw) {
   if (typeof raw !== "string" || raw.trim() === "") return null;
@@ -251,17 +253,95 @@ function startMain(api, injectedDeps) {
   }
 }
 
-function start(api) {
-  if (api.process === "main") {
-    startMain(api, {});
+function showNotice(message, documentApi) {
+  const notice = documentApi.createElement("div");
+  notice.dataset.codexUnityAssetLinkNotice = "true";
+  notice.textContent = message;
+  notice.style.position = "fixed";
+  notice.style.right = "16px";
+  notice.style.bottom = "16px";
+  notice.style.zIndex = "2147483647";
+  notice.style.maxWidth = "420px";
+  notice.style.padding = "10px 12px";
+  notice.style.borderRadius = "8px";
+  notice.style.background = "var(--color-background-panel, #222)";
+  notice.style.color = "var(--color-token-text-primary, #fff)";
+  notice.style.boxShadow = "0 8px 28px rgba(0, 0, 0, 0.28)";
+  documentApi.body.append(notice);
+  notices.add(notice);
+  const timer = setTimeout(() => {
+    notices.delete(notice);
+    notice.remove();
+  }, 3500);
+  return () => {
+    clearTimeout(timer);
+    notices.delete(notice);
+    notice.remove();
+  };
+}
+
+function replayOriginalClick(anchor) {
+  replayBypass.add(anchor);
+  try {
+    anchor.click();
+  } finally {
+    replayBypass.delete(anchor);
   }
 }
 
-function stop() {
+function startRenderer(api, documentApi) {
+  stopRenderer();
+  const onClick = (event) => {
+    if (!isEligibleClick(event)) return;
+    const anchor = event.target && event.target.closest
+      ? event.target.closest("a[href]")
+      : null;
+    if (!anchor || replayBypass.has(anchor)) return;
+    const parsed = parseDestination(anchor.getAttribute("href") || anchor.href);
+    if (!parsed || !hasAssetsSegment(parsed.path)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void api.ipc.invoke("open-asset", parsed)
+      .then((result) => {
+        if (!result || result.handled === false) {
+          replayOriginalClick(anchor);
+          return;
+        }
+        if (!result.ok) {
+          showNotice(
+            result.message || "Unity could not open this asset.",
+            documentApi,
+          );
+        }
+      })
+      .catch(() => {
+        showNotice("Unity link handling failed.", documentApi);
+      });
+  };
+  documentApi.addEventListener("click", onClick, true);
+  rendererCleanup = () => documentApi.removeEventListener("click", onClick, true);
+}
+
+function stopRenderer() {
   if (rendererCleanup) {
     rendererCleanup();
     rendererCleanup = undefined;
   }
+  for (const notice of notices) notice.remove();
+  notices.clear();
+}
+
+function start(api) {
+  if (api.process === "main") {
+    startMain(api, {});
+    return;
+  }
+  startRenderer(api, document);
+}
+
+function stop() {
+  stopRenderer();
 }
 
 module.exports = {
@@ -278,5 +358,9 @@ module.exports = {
     sendPipeRequest,
     handleOpenAsset,
     startMain,
+    showNotice,
+    replayOriginalClick,
+    startRenderer,
+    stopRenderer,
   },
 };
