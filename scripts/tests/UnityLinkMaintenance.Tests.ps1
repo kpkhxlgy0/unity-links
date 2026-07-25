@@ -906,4 +906,342 @@ Test-Case "returns no executable paths when the process query is empty" {
     Assert-Equal 0 $paths.Count
 }
 
+Test-Case "process snapshot distinguishes an empty successful query" {
+    $snapshot = Get-CodexProcessSnapshot -ProcessQuery { @() }
+    Assert-True $snapshot.Succeeded
+    Assert-Equal 0 @($snapshot.ExecutablePaths).Count
+    Assert-Equal "" $snapshot.FailureReason
+}
+
+Test-Case "process snapshot fails closed when CIM throws" {
+    $snapshot = Get-CodexProcessSnapshot -ProcessQuery {
+        throw "CIM unavailable"
+    }
+    Assert-True (!$snapshot.Succeeded)
+    Assert-Equal 0 @($snapshot.ExecutablePaths).Count
+    Assert-True ($snapshot.FailureReason -match "CIM unavailable")
+}
+
+Test-Case "process snapshot fails closed when a target path is unreadable" {
+    $snapshot = Get-CodexProcessSnapshot -ProcessQuery {
+        @([pscustomobject] @{ Name = "ChatGPT.exe"; ExecutablePath = $null })
+    }
+    Assert-True (!$snapshot.Succeeded)
+    Assert-True ($snapshot.FailureReason -match "ExecutablePath")
+}
+
+Test-Case "mutation guard blocks an unknown process state" {
+    $guard = Get-CodexMutationGuard -ProcessSnapshot ([pscustomobject] @{
+        Succeeded = $false
+        ExecutablePaths = @()
+        FailureReason = "CIM unavailable"
+    })
+    Assert-True (!$guard.Allowed)
+    Assert-Equal "ProcessQueryFailed" $guard.BlockReason
+}
+
+Test-Case "mutation guard blocks any running Codex process" {
+    $guard = Get-CodexMutationGuard -ProcessSnapshot ([pscustomobject] @{
+        Succeeded = $true
+        ExecutablePaths = @("C:\mirror\app\ChatGPT.exe")
+        FailureReason = ""
+    })
+    Assert-True (!$guard.Allowed)
+    Assert-Equal "MirrorRunning" $guard.BlockReason
+}
+
+Test-Case "maintenance mutex blocks a second process and recovers abandonment" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codexpp-mutex-test-" + [guid]::NewGuid().ToString("N"))
+    $holderScript = Join-Path $root "hold-lock.ps1"
+    $readyPath = Join-Path $root "ready"
+    New-Item -ItemType Directory -Path $root | Out-Null
+    [System.IO.File]::WriteAllText($holderScript, @'
+param([Parameter(Mandatory)] [string] $ReadyPath)
+$mutex = [System.Threading.Mutex]::new(
+    $false,
+    "Local\CodexPlusPlus.EditorLinks.Maintenance.v1")
+$null = $mutex.WaitOne()
+[System.IO.File]::WriteAllText($ReadyPath, "ready")
+Start-Sleep -Seconds 60
+'@)
+    $holder = Start-Process `
+        -FilePath (Get-Command pwsh).Source `
+        -ArgumentList @("-NoProfile", "-File", $holderScript, $readyPath) `
+        -WindowStyle Hidden `
+        -PassThru
+    try
+    {
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while (!(Test-Path -LiteralPath $readyPath) -and
+            [DateTime]::UtcNow -lt $deadline)
+        {
+            Start-Sleep -Milliseconds 50
+        }
+        Assert-True (Test-Path -LiteralPath $readyPath) "Lock holder did not start."
+
+        $second = Enter-CodexMaintenanceLock -TimeoutMilliseconds 0
+        try
+        {
+            Assert-True (!$second.Acquired)
+            Assert-Equal "MaintenanceBusy" $second.BlockReason
+        }
+        finally
+        {
+            Exit-CodexMaintenanceLock -LockHandle $second
+        }
+
+        Stop-Process -Id $holder.Id -Force
+        $holder.WaitForExit()
+        $released = Enter-CodexMaintenanceLock -TimeoutMilliseconds 1000
+        try
+        {
+            Assert-True $released.Acquired "The mutex was not released after the holder process exited."
+        }
+        finally
+        {
+            Exit-CodexMaintenanceLock -LockHandle $released
+        }
+
+        if ($null -eq ("CodexMaintenanceMutexAbandoner" -as [type]))
+        {
+            Add-Type -TypeDefinition @'
+using System.Threading;
+
+public static class CodexMaintenanceMutexAbandoner
+{
+    public static void Abandon(string name)
+    {
+        using var ready = new ManualResetEventSlim(false);
+        var thread = new Thread(() =>
+        {
+            var mutex = new Mutex(false, name);
+            mutex.WaitOne();
+            ready.Set();
+        });
+        thread.Start();
+        ready.Wait();
+        thread.Join();
+    }
+}
+'@
+        }
+        [CodexMaintenanceMutexAbandoner]::Abandon(
+            "Local\CodexPlusPlus.EditorLinks.Maintenance.v1")
+        $recovered = Enter-CodexMaintenanceLock -TimeoutMilliseconds 1000
+        try
+        {
+            Assert-True $recovered.Acquired "The abandoned mutex was not acquired."
+            Assert-True $recovered.Abandoned "The abandoned mutex was acquired without the diagnostic flag."
+        }
+        finally
+        {
+            Exit-CodexMaintenanceLock -LockHandle $recovered
+        }
+    }
+    finally
+    {
+        if (!$holder.HasExited) { Stop-Process -Id $holder.Id -Force }
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "same mirror drift repairs the managed mirror directly" {
+    $plan = Get-CodexRepairPlan `
+        -AppLayout ([pscustomobject] @{
+            OfficialAppRoot = "C:\WindowsApps\Codex\app"
+            MirrorAppRoot = "C:\Local\codex-plusplus\store-apps\Codex\app"
+        }) `
+        -CodexState ([pscustomobject] @{
+            appRoot = "C:\Local\codex-plusplus\store-apps\Codex\app"
+        }) `
+        -InjectionRequired $true `
+        -MirrorComplete $true
+    Assert-Equal "RepairMirror" $plan.Action
+    Assert-Equal "C:\Local\codex-plusplus\store-apps\Codex\app" $plan.TargetAppRoot
+    Assert-True $plan.RequiresNoCodexProcesses
+}
+
+Test-Case "stale recorded mirror rebuilds from the official Appx" {
+    $plan = Get-CodexRepairPlan `
+        -AppLayout ([pscustomobject] @{
+            OfficialAppRoot = "C:\WindowsApps\CodexNew\app"
+            MirrorAppRoot = "C:\Local\codex-plusplus\store-apps\CodexNew\app"
+        }) `
+        -CodexState ([pscustomobject] @{
+            appRoot = "C:\Local\codex-plusplus\store-apps\CodexOld\app"
+        }) `
+        -InjectionRequired $true `
+        -MirrorComplete $false
+    Assert-Equal "RebuildFromOfficial" $plan.Action
+    Assert-Equal "C:\WindowsApps\CodexNew\app" $plan.TargetAppRoot
+}
+
+Test-Case "current injection produces no repair command" {
+    $plan = Get-CodexRepairPlan `
+        -AppLayout ([pscustomobject] @{
+            OfficialAppRoot = "C:\WindowsApps\Codex\app"
+            MirrorAppRoot = "C:\Local\codex-plusplus\store-apps\Codex\app"
+        }) `
+        -CodexState ([pscustomobject] @{
+            appRoot = "C:\Local\codex-plusplus\store-apps\Codex\app"
+        }) `
+        -InjectionRequired $false `
+        -MirrorComplete $true
+    Assert-Equal "None" $plan.Action
+    Assert-Equal "" $plan.TargetAppRoot
+}
+
+Test-Case "maintenance state blocks a failed process query" {
+    $result = Get-CodexMaintenanceState `
+        -AppLayout ([pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }) `
+        -CodexState ([pscustomobject] @{ appRoot = "C:\mirror\app" }) `
+        -StatusText "current asar: abc (matches patched)" `
+        -LinkStatus "Current" `
+        -ProcessQuerySucceeded $false `
+        -ProcessQueryFailureReason "CIM unavailable"
+    Assert-Equal "Blocked" $result.Status
+    Assert-Equal "ProcessQueryFailed" $result.BlockReason
+    Assert-True ($result.BlockDetail -match "CIM unavailable")
+}
+
+Test-Case "maintenance state allows link reload while injection is current" {
+    $result = Get-CodexMaintenanceState `
+        -AppLayout ([pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }) `
+        -CodexState ([pscustomobject] @{ appRoot = "C:\mirror\app" }) `
+        -StatusText "current asar: abc (matches patched)" `
+        -LinkStatus "WrongTarget" `
+        -RunningExecutablePaths @("C:\mirror\app\ChatGPT.exe") `
+        -ProcessQuerySucceeded $true
+    Assert-Equal "LinkRequired" $result.Status
+    Assert-Equal "" $result.BlockReason
+}
+
+Test-Case "uninject state blocks a failed process query" {
+    $result = Get-CodexUninjectState `
+        -CodexState $null `
+        -HasCommand $false `
+        -LinkStatus "Current" `
+        -ProcessQuerySucceeded $false `
+        -ProcessQueryFailureReason "CIM unavailable"
+    Assert-Equal "Blocked" $result.Status
+    Assert-Equal "ProcessQueryFailed" $result.BlockReason
+    Assert-True ($result.BlockDetail -match "CIM unavailable")
+}
+
+Test-Case "uninject state permits verified link cleanup after an empty successful query" {
+    $result = Get-CodexUninjectState `
+        -CodexState $null `
+        -HasCommand $false `
+        -LinkStatus "Current" `
+        -ProcessQuerySucceeded $true
+    Assert-Equal "LinkOnly" $result.Status
+    Assert-Equal "" $result.BlockReason
+}
+
+Test-Case "mirror completeness requires the ASAR and launch executable" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-mirror-layout-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        $appRoot = Join-Path $root "app"
+        $asar = Join-Path $appRoot "resources/app.asar"
+        $executable = Join-Path $appRoot "ChatGPT.exe"
+        New-Item -ItemType Directory -Path (Split-Path $asar -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($asar, "asar")
+        $appLayout = [pscustomobject] @{
+            MirrorAppRoot = $appRoot
+            MirrorAsar = $asar
+        }
+        $launchLayout = [pscustomobject] @{
+            MirrorExecutable = $executable
+        }
+
+        Assert-True (!(Test-CodexMirrorComplete `
+            -AppLayout $appLayout `
+            -LaunchLayout $launchLayout))
+        [System.IO.File]::WriteAllText($executable, "exe")
+        Assert-True (Test-CodexMirrorComplete `
+            -AppLayout $appLayout `
+            -LaunchLayout $launchLayout)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "guarded mutation does not invoke writes when the recheck blocks" {
+    $calls = [pscustomobject] @{ Mutation = 0; Observation = 0 }
+    $result = Invoke-CodexMutationSafely `
+        -ProcessQuery {
+            @([pscustomobject] @{
+                Name = "ChatGPT.exe"
+                ExecutablePath = "C:\mirror\app\ChatGPT.exe"
+            })
+        } `
+        -Mutation { $calls.Mutation++ } `
+        -FailureObservation { $calls.Observation++ }
+    Assert-True (!$result.Invoked)
+    Assert-Equal "MirrorRunning" $result.BlockReason
+    Assert-Equal 0 $calls.Mutation
+    Assert-Equal 0 $calls.Observation
+}
+
+Test-Case "guarded mutation rereads state after command failure" {
+    $calls = [pscustomobject] @{ Mutation = 0; Observation = 0 }
+    $result = Invoke-CodexMutationSafely `
+        -ProcessQuery { @() } `
+        -Mutation {
+            $calls.Mutation++
+            throw "partial mutation"
+        } `
+        -FailureObservation {
+            $calls.Observation++
+            [pscustomobject] @{ StateStatus = "Present" }
+        }
+    Assert-True $result.Invoked
+    Assert-True (!$result.Succeeded)
+    Assert-True ($result.ErrorMessage -match "partial mutation")
+    Assert-Equal 1 $calls.Mutation
+    Assert-Equal 1 $calls.Observation
+    Assert-Equal "Present" $result.FailureObservation.StateStatus
+}
+
+Test-Case "post-failure observation rereads state status and mirror layout" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-failure-observation-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        $statePath = Join-Path $root "state.json"
+        $appRoot = Join-Path $root "app"
+        $asar = Join-Path $appRoot "resources/app.asar"
+        $executable = Join-Path $appRoot "ChatGPT.exe"
+        New-Item -ItemType Directory -Path (Split-Path $asar -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($statePath, '{"appRoot":"C:\\mirror\\app"}')
+        [System.IO.File]::WriteAllText($asar, "asar")
+        [System.IO.File]::WriteAllText($executable, "exe")
+
+        $observation = Get-CodexPostFailureObservation `
+            -StatePath $statePath `
+            -StatusQuery { "current asar: drift" } `
+            -AppLayout ([pscustomobject] @{
+                MirrorAppRoot = $appRoot
+                MirrorAsar = $asar
+            }) `
+            -LaunchLayout ([pscustomobject] @{
+                MirrorExecutable = $executable
+            })
+        Assert-Equal "Present" $observation.StateStatus
+        Assert-Equal "C:\mirror\app" $observation.RecordedAppRoot
+        Assert-True $observation.StatusSucceeded
+        Assert-True ($observation.StatusText -match "drift")
+        Assert-True $observation.MirrorComplete
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Complete-Tests

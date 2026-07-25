@@ -135,6 +135,21 @@ pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
 - `LinkRequired`：注入正确，但 tweak junction 缺失或仍指向旧仓库位置。
 - `Blocked`：待修改镜像正在运行，或 live tweak 路径是不能安全替换的真实目录。
 
+### 共享 Codex++ 维护
+
+Unity Links 和 Unreal Links 共用同一份当前用户 Codex++ 受管镜像。任一时刻只运行一个 Editor Links
+维护脚本；两个项目通过同一把共享锁协调。安全阻塞会报告明确原因：
+
+- `MaintenanceBusy`：另一个 Unity Links 或 Unreal Links 维护脚本正持有共享锁。
+- `ProcessQueryFailed`：脚本无法可靠确认 Codex 是否在运行，因此不执行任何写入。
+- `MirrorRunning`：会修改 ASAR 的安装、修复或取消注入操作要求关闭全部 Codex 进程。
+- `UnsafeLink`：live tweak 路径是一个真实目录，脚本不会自动替换或删除。
+
+只要进程查询成功，已经正确 patch 的 Codex 运行时仍允许维护 tweak junction 和启动入口。同版本 ASAR
+漂移会直接修复受管镜像；只有最新镜像是新建、过期、缺失或不完整时，才在可靠确认 Codex 已关闭后从官方
+Appx 重建。脚本不会终止或重启 Codex。不要对这套共享环境直接运行原始 `codexplusplus install`、`repair`
+或 `uninstall` 命令；请使用仓库维护脚本，让两个引擎遵守相同的安全检查。
+
 ### 移动仓库
 
 移动仓库后，旧 junction 和 Unity manifest 中的相对 `file:` 路径不会自动跟随。保留旧目录，直到以下步骤都成功：
@@ -210,7 +225,8 @@ node .\codex-tweak\scripts\send-open.js `
 ## 安全边界与退出码
 
 所有 Codex 维护脚本都不终止、启动或自动控制 Codex，也不直接修改 WindowsApps。Codex++ 1.0.0 不应在没有
-显式 `--app` 的情况下运行 `codexplusplus debug`；这些维护脚本不使用 `debug`。
+显式 `--app` 的情况下运行 `codexplusplus debug`；这些维护脚本不使用 `debug`。脚本还会保持 Codex++
+watcher 禁用，并通过 `Local\CodexPlusPlus.EditorLinks.Maintenance.v1` 串行执行全局维护。
 
 - `0`：检测成功且未被阻塞，或普通模式操作成功；检查模式下仍应读取打印状态。
 - `1`：输入、环境、校验或操作失败，未达到可验证的目标状态。

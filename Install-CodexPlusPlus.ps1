@@ -30,14 +30,6 @@ function Get-CommandVersion
     return [version] $versionMatch.Value
 }
 
-function Get-CodexExecutablePaths
-{
-    $processes = @(
-        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" `
-            -ErrorAction SilentlyContinue)
-    return @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
-}
-
 function Invoke-CheckedCommand
 {
     param(
@@ -82,14 +74,29 @@ function Remove-VerifiedTree
     }
 }
 
+$maintenanceLock = $null
 $workRoot = $null
 try
 {
+    $maintenanceLock = Enter-CodexMaintenanceLock -TimeoutMilliseconds 0
+    if (!$maintenanceLock.Acquired)
+    {
+        [Console]::Error.WriteLine(
+            "Blocked [MaintenanceBusy]: another Editor Links maintenance operation is running.")
+        exit 2
+    }
+    if ($maintenanceLock.Abandoned)
+    {
+        Write-Host "Recovered an abandoned Editor Links maintenance lock." `
+            -ForegroundColor Yellow
+    }
+
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $PSScriptRoot
     Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
 
     if (!$env:USERPROFILE) { throw "USERPROFILE is not available." }
     if (!$env:LOCALAPPDATA) { throw "LOCALAPPDATA is not available." }
+    if (!$env:APPDATA) { throw "APPDATA is not available." }
 
     $sourceRoot = Resolve-NormalizedPath (Join-Path $env:USERPROFILE ".codex-plusplus/source")
     $expectedSourceRoot = Resolve-NormalizedPath (Join-Path ([Environment]::GetFolderPath("UserProfile")) ".codex-plusplus/source")
@@ -100,6 +107,8 @@ try
 
     $package = Select-LatestCodexPackage -Packages @(Get-AppxPackage -Name OpenAI.Codex)
     $appLayout = Get-CodexAppLayout -Package $package -LocalAppData $env:LOCALAPPDATA
+    $launchLayout = Get-CodexPackageLaunchLayout -Package $package -AppLayout $appLayout
+    $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
     if (!(Test-Path -LiteralPath $appLayout.OfficialAsar -PathType Leaf))
     {
         throw "Official Codex ASAR not found: $($appLayout.OfficialAsar)"
@@ -134,15 +143,23 @@ try
         }
     }
     $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    $targetMirrorRunning = @(
-        Get-CodexExecutablePaths | Where-Object { Test-PathInside -Path $_ -Root $appLayout.MirrorAppRoot }
-    ).Count -gt 0
+    $processSnapshot = Get-CodexProcessSnapshot
+    $codexRunning = @($processSnapshot.ExecutablePaths).Count -gt 0
 
-    if ($versionBlockReason)
+    if (!$processSnapshot.Succeeded)
+    {
+        $installState = [pscustomobject] @{
+            Status = "Blocked"
+            Reason = [string] $processSnapshot.FailureReason
+            BlockReason = "ProcessQueryFailed"
+        }
+    }
+    elseif ($versionBlockReason)
     {
         $installState = [pscustomobject] @{
             Status = "Blocked"
             Reason = "An existing codexplusplus command has an unknown version. $versionBlockReason"
+            BlockReason = "PrerequisiteFailed"
         }
     }
     else
@@ -151,29 +168,52 @@ try
             -InstalledVersion $installedVersion `
             -NodeMajor $nodeMajor `
             -HasNpm ($null -ne $npmCommand) `
-            -TargetMirrorRunning $targetMirrorRunning
+            -TargetMirrorRunning $codexRunning
+        $installBlockReason = if ($installState.Status -ne "Blocked") {
+            ""
+        } elseif ($codexRunning) {
+            "MirrorRunning"
+        } else {
+            "PrerequisiteFailed"
+        }
+        $installState | Add-Member `
+            -NotePropertyName BlockReason `
+            -NotePropertyValue $installBlockReason
     }
 
     Write-Host "Status: $($installState.Status)"
     Write-Host "Reason: $($installState.Reason)"
+    if ($installState.BlockReason)
+    {
+        Write-Host "Block reason: $($installState.BlockReason)"
+    }
     Write-Host "Pinned Codex++: $codexPlusPlusVersion ($codexPlusPlusCommit)"
     Write-Host "Codex Appx: $($package.PackageFullName)"
     Write-Host "Source root: $sourceRoot"
 
     if ($CheckOnly)
     {
-        if ($installState.Status -eq "Blocked") { exit 2 }
+        if ($installState.Status -eq "Blocked")
+        {
+            [Console]::Error.WriteLine(
+                "Blocked [$($installState.BlockReason)]: $($installState.Reason)")
+            exit 2
+        }
         exit 0
     }
     if ($installState.Status -eq "Blocked")
     {
-        [Console]::Error.WriteLine("Blocked: $($installState.Reason)")
+        [Console]::Error.WriteLine(
+            "Blocked [$($installState.BlockReason)]: $($installState.Reason)")
         exit 2
     }
     if ($installState.Status -eq "Current")
     {
+        Exit-CodexMaintenanceLock -LockHandle $maintenanceLock
+        $maintenanceLock = $null
         $pwshPath = (Get-Process -Id $PID).Path
         & $pwshPath -NoProfile -File $injectScript
+        if ($LASTEXITCODE -eq 2) { exit 2 }
         if ($LASTEXITCODE -ne 0) { throw "Inject-CodexPlusPlus.ps1 exited with $LASTEXITCODE." }
         exit 0
     }
@@ -232,9 +272,52 @@ try
             throw "Expected the built Codex++ CLI to report 1.0.0, found $directVersion."
         }
 
-        Invoke-CheckedCommand -Executable $nodeCommand.Source `
-            -Arguments @($installedCli, "install", "--app", $appLayout.OfficialAppRoot, "--no-watcher") `
-            -FailureMessage "Pinned Codex++ installer failed."
+        $installArguments = @(
+            $installedCli,
+            "install",
+            "--app",
+            $appLayout.OfficialAppRoot,
+            "--no-watcher")
+        $mutationResult = Invoke-CodexMutationSafely `
+            -Mutation {
+                Invoke-CheckedCommand `
+                    -Executable $nodeCommand.Source `
+                    -Arguments $installArguments `
+                    -FailureMessage "Pinned Codex++ installer failed."
+            } `
+            -FailureObservation {
+                Get-CodexPostFailureObservation `
+                    -StatePath $statePath `
+                    -StatusQuery {
+                        $statusOutput = & $nodeCommand.Source $installedCli status 2>&1
+                        if ($LASTEXITCODE -ne 0)
+                        {
+                            throw "Pinned Codex++ status failed: " +
+                                ($statusOutput -join [Environment]::NewLine)
+                        }
+                        $statusOutput
+                    } `
+                    -AppLayout $appLayout `
+                    -LaunchLayout $launchLayout
+            }
+        if (!$mutationResult.Invoked)
+        {
+            Restore-PreviousSource `
+                -SourceRoot $sourceRoot `
+                -PreviousRoot $previousRoot `
+                -WorkRoot $workRoot
+            [Console]::Error.WriteLine(
+                "Blocked [$($mutationResult.BlockReason)]: " +
+                $mutationResult.FailureReason)
+            exit 2
+        }
+        if (!$mutationResult.Succeeded)
+        {
+            $observation = $mutationResult.FailureObservation |
+                ConvertTo-Json -Compress -Depth 4
+            throw "$($mutationResult.ErrorMessage) Post-failure observation: $observation"
+        }
+        $mutationResult.Output | ForEach-Object { Write-Host $_ }
         $initialInstallSucceeded = $true
     }
     catch
@@ -260,8 +343,11 @@ try
         Remove-VerifiedTree -Path $previousRoot -ExpectedPath $expectedPreviousRoot
     }
 
+    Exit-CodexMaintenanceLock -LockHandle $maintenanceLock
+    $maintenanceLock = $null
     $pwshPath = (Get-Process -Id $PID).Path
     & $pwshPath -NoProfile -File $injectScript
+    if ($LASTEXITCODE -eq 2) { exit 2 }
     if ($LASTEXITCODE -ne 0)
     {
         throw "Codex++ 1.0.0 was installed, but Inject-CodexPlusPlus.ps1 exited with $LASTEXITCODE."
@@ -274,9 +360,16 @@ catch
 }
 finally
 {
-    if ($workRoot)
+    try
     {
-        $expectedWorkRoot = Resolve-NormalizedPath $workRoot
-        Remove-VerifiedTree -Path $workRoot -ExpectedPath $expectedWorkRoot
+        if ($workRoot)
+        {
+            $expectedWorkRoot = Resolve-NormalizedPath $workRoot
+            Remove-VerifiedTree -Path $workRoot -ExpectedPath $expectedWorkRoot
+        }
+    }
+    finally
+    {
+        Exit-CodexMaintenanceLock -LockHandle $maintenanceLock
     }
 }

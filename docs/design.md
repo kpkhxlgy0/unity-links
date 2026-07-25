@@ -235,6 +235,20 @@ The scripts derive their source paths from their own repository location and do 
 Because both the tweak junction and Unity package dependency reference this repository, moving it requires rerunning
 the injection script and the Unity installer for every affected project.
 
+Unity Links and Unreal Links independently implement the same global-maintenance contract because they share one
+per-user Codex++ mirror. Every global entry acquires
+`Local\CodexPlusPlus.EditorLinks.Maintenance.v1`; a busy lock or failed `Win32_Process` query blocks writes with exit
+code `2`. Process discovery is repeated immediately before an ASAR-changing Codex++ command. Current latest mirror
+plus injection drift routes `repair --force --app` to `MirrorAppRoot`. A new, stale, missing, or incomplete latest
+mirror routes rebuilding to `OfficialAppRoot`, and only after a reliable check proves that no Codex process is
+running. Completeness requires the mirror root, `resources/app.asar`, and the manifest-derived desktop executable.
+A failed mutation rereads `state.json`, `codexplusplus status`, and mirror completeness while the lock is still held;
+the observed state is reported without assuming that the command exit code describes the final filesystem state. A
+failed direct mirror repair never falls back to the official Appx in the same run. Link and launcher-only maintenance
+may proceed while the current patched mirror runs when the initial process query succeeded. The watcher remains
+disabled, and an install entry releases its lock before starting the injection entry, which reacquires the lock and
+recomputes live state.
+
 ## Explicit Non-Goals for Version 0.1.0
 
 - Starting, installing, or selecting a Unity Editor version.

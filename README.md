@@ -153,6 +153,22 @@ State meanings:
 - `Blocked`: a mirror that must be changed is running, or the live tweak path is a real directory that cannot be
   replaced safely.
 
+### Shared Codex++ Maintenance
+
+Unity Links and Unreal Links share the same per-user Codex++ managed mirror. Run only one Editor Links maintenance
+script at a time; both projects coordinate through one shared lock. A safety block reports its exact reason:
+
+- `MaintenanceBusy`: another Unity Links or Unreal Links maintenance script holds the shared lock.
+- `ProcessQueryFailed`: the script could not reliably determine whether Codex is running, so it performs no write.
+- `MirrorRunning`: an ASAR-changing install, repair, or uninject operation requires every Codex process to be closed.
+- `UnsafeLink`: a live tweak path is a real directory and will not be replaced or removed automatically.
+
+Link and launcher maintenance remains available while a correctly patched Codex mirror is running, provided process
+discovery succeeded. Same-version ASAR drift is repaired directly against the managed mirror; a new, stale, missing,
+or incomplete mirror is rebuilt from the official Appx only after Codex is confirmed closed. The scripts never stop or
+restart Codex. Do not use raw `codexplusplus install`, `repair`, or `uninstall` commands for this shared setup; use the
+repository maintenance scripts so both engines observe the same safety checks.
+
 ### Moving the Repository
 
 After moving the repository, the old junction and relative `file:` paths in Unity manifests do not update
@@ -237,7 +253,8 @@ users of an update.
 
 The Codex maintenance scripts never terminate, launch, or automatically control Codex, and they never modify
 WindowsApps directly. With Codex++ 1.0.0, do not run `codexplusplus debug` without an explicit `--app`; these
-maintenance scripts do not use `debug`.
+maintenance scripts do not use `debug`. They also keep the Codex++ watcher disabled and serialize global maintenance
+with `Local\CodexPlusPlus.EditorLinks.Maintenance.v1`.
 
 - `0`: the check completed without a safety block, or the normal-mode operation succeeded. In check mode, still read
   the printed state.

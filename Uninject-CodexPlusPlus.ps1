@@ -15,16 +15,22 @@ function Read-CodexPlusPlusState
     return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
 }
 
-function Get-CodexExecutablePaths
-{
-    $processes = @(
-        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" `
-            -ErrorAction SilentlyContinue)
-    return @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
-}
-
+$maintenanceLock = $null
 try
 {
+    $maintenanceLock = Enter-CodexMaintenanceLock -TimeoutMilliseconds 0
+    if (!$maintenanceLock.Acquired)
+    {
+        [Console]::Error.WriteLine(
+            "Blocked [MaintenanceBusy]: another Editor Links maintenance operation is running.")
+        exit 2
+    }
+    if ($maintenanceLock.Abandoned)
+    {
+        Write-Host "Recovered an abandoned Editor Links maintenance lock." `
+            -ForegroundColor Yellow
+    }
+
     if (!$env:APPDATA) { throw "APPDATA is not available." }
 
     $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
@@ -33,11 +39,14 @@ try
     $codexState = Read-CodexPlusPlusState -Path $statePath
     $codexPlusPlus = Get-Command codexplusplus -ErrorAction SilentlyContinue
     $linkState = Get-TweakLinkState -LinkPath $linkPath -ExpectedTarget $expectedTweakPath
+    $processSnapshot = Get-CodexProcessSnapshot
     $uninject = Get-CodexUninjectState `
         -CodexState $codexState `
         -HasCommand ($null -ne $codexPlusPlus) `
         -LinkStatus $linkState.Status `
-        -RunningExecutablePaths (Get-CodexExecutablePaths)
+        -RunningExecutablePaths @($processSnapshot.ExecutablePaths) `
+        -ProcessQuerySucceeded ([bool] $processSnapshot.Succeeded) `
+        -ProcessQueryFailureReason ([string] $processSnapshot.FailureReason)
 
     Write-Host "Status: $($uninject.Status)"
     Write-Host "Reason: $($uninject.Reason)"
@@ -46,12 +55,18 @@ try
 
     if ($CheckOnly)
     {
-        if ($uninject.Status -eq "Blocked") { exit 2 }
+        if ($uninject.Status -eq "Blocked")
+        {
+            [Console]::Error.WriteLine(
+                "Blocked [$($uninject.BlockReason)]: $($uninject.BlockDetail)")
+            exit 2
+        }
         exit 0
     }
     if ($uninject.Status -eq "Blocked")
     {
-        [Console]::Error.WriteLine("Blocked: $($uninject.Reason)")
+        [Console]::Error.WriteLine(
+            "Blocked [$($uninject.BlockReason)]: $($uninject.BlockDetail)")
         exit 2
     }
     if ($uninject.Status -eq "NotInjected")
@@ -72,12 +87,44 @@ try
     }
 
     $arguments = Get-CodexUninstallArguments -AppRoot $uninject.AppRoot
-    $output = & $codexPlusPlus.Source @arguments 2>&1
-    if ($LASTEXITCODE -ne 0)
+    $mutationResult = Invoke-CodexMutationSafely `
+        -Mutation {
+            $commandOutput = & $codexPlusPlus.Source @arguments 2>&1
+            if ($LASTEXITCODE -ne 0)
+            {
+                throw "codexplusplus uninstall failed:" +
+                    [Environment]::NewLine +
+                    ($commandOutput -join [Environment]::NewLine)
+            }
+            $commandOutput
+        } `
+        -FailureObservation {
+            Get-CodexPostFailureObservation `
+                -StatePath $statePath `
+                -StatusQuery {
+                    $statusOutput = & $codexPlusPlus.Source status 2>&1
+                    if ($LASTEXITCODE -ne 0)
+                    {
+                        throw "codexplusplus status failed: " +
+                            ($statusOutput -join [Environment]::NewLine)
+                    }
+                    $statusOutput
+                }
+        }
+    if (!$mutationResult.Invoked)
     {
-        throw "codexplusplus uninstall failed:" + [Environment]::NewLine + ($output -join [Environment]::NewLine)
+        [Console]::Error.WriteLine(
+            "Blocked [$($mutationResult.BlockReason)]: " +
+            $mutationResult.FailureReason)
+        exit 2
     }
-    $output | ForEach-Object { Write-Host $_ }
+    if (!$mutationResult.Succeeded)
+    {
+        $observation = $mutationResult.FailureObservation |
+            ConvertTo-Json -Compress -Depth 4
+        throw "$($mutationResult.ErrorMessage) Post-failure observation: $observation"
+    }
+    $mutationResult.Output | ForEach-Object { Write-Host $_ }
     if (Test-Path -LiteralPath $statePath -PathType Leaf)
     {
         throw "codexplusplus uninstall returned success but state.json still exists; the tweak link was retained."
@@ -95,4 +142,8 @@ catch
 {
     Write-Error $_
     exit 1
+}
+finally
+{
+    Exit-CodexMaintenanceLock -LockHandle $maintenanceLock
 }

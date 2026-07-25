@@ -29,14 +29,6 @@ function Read-CodexPlusPlusState
     return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
 }
 
-function Get-CodexExecutablePaths
-{
-    $processes = @(
-        Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" `
-            -ErrorAction SilentlyContinue)
-    return @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
-}
-
 function Get-LiveMaintenanceContext
 {
     param(
@@ -47,7 +39,8 @@ function Get-LiveMaintenanceContext
         [Parameter(Mandatory)] [string] $ExpectedTweakPath,
         [Parameter(Mandatory)] [string] $ExpectedLaunchExecutable,
         [Parameter(Mandatory)] [string] $LauncherCommandPath,
-        [Parameter(Mandatory)] [string] $StartMenuShortcutPath)
+        [Parameter(Mandatory)] [string] $StartMenuShortcutPath,
+        [Parameter(Mandatory)] [object] $ProcessSnapshot)
 
     $codexState = Read-CodexPlusPlusState -Path $StatePath
     $statusText = ""
@@ -58,26 +51,42 @@ function Get-LiveMaintenanceContext
     $linkState = Get-TweakLinkState -LinkPath $LinkPath -ExpectedTarget $ExpectedTweakPath
     $launcherState = Get-CodexLauncherState -ExpectedExecutable $ExpectedLaunchExecutable `
         -CommandPath $LauncherCommandPath -StartMenuShortcutPath $StartMenuShortcutPath
-    $runningPaths = Get-CodexExecutablePaths
     $maintenanceState = Get-CodexMaintenanceState `
         -AppLayout $AppLayout `
         -CodexState $codexState `
         -StatusText $statusText `
         -LinkStatus $linkState.Status `
         -LauncherStatus $launcherState.Status `
-        -RunningExecutablePaths $runningPaths
+        -RunningExecutablePaths @($ProcessSnapshot.ExecutablePaths) `
+        -ProcessQuerySucceeded ([bool] $ProcessSnapshot.Succeeded) `
+        -ProcessQueryFailureReason ([string] $ProcessSnapshot.FailureReason)
 
     return [pscustomobject] @{
         CodexState = $codexState
         LinkState = $linkState
         LauncherState = $launcherState
-        RunningPaths = $runningPaths
+        ProcessSnapshot = $ProcessSnapshot
+        RunningPaths = @($ProcessSnapshot.ExecutablePaths)
         MaintenanceState = $maintenanceState
     }
 }
 
+$maintenanceLock = $null
 try
 {
+    $maintenanceLock = Enter-CodexMaintenanceLock -TimeoutMilliseconds 0
+    if (!$maintenanceLock.Acquired)
+    {
+        [Console]::Error.WriteLine(
+            "Blocked [MaintenanceBusy]: another Editor Links maintenance operation is running.")
+        exit 2
+    }
+    if ($maintenanceLock.Abandoned)
+    {
+        Write-Host "Recovered an abandoned Editor Links maintenance lock." `
+            -ForegroundColor Yellow
+    }
+
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $PSScriptRoot
     Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
 
@@ -117,6 +126,7 @@ try
     $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
     $desktopShortcutPath = if ($desktopPath) { Join-Path $desktopPath "Codex++.lnk" } else { $null }
     $managedStoreRoot = Join-Path $env:LOCALAPPDATA "codex-plusplus/store-apps"
+    $processSnapshot = Get-CodexProcessSnapshot
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
         -AppLayout $appLayout `
@@ -125,7 +135,8 @@ try
         -ExpectedTweakPath $expectedTweakPath `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath
+        -StartMenuShortcutPath $startMenuShortcutPath `
+        -ProcessSnapshot $processSnapshot
 
     Write-Host "Status: $($context.MaintenanceState.Status)"
     Write-Host "Codex++: $version"
@@ -137,31 +148,82 @@ try
 
     if ($CheckOnly)
     {
-        if ($context.MaintenanceState.Status -eq "Blocked") { exit 2 }
+        if ($context.MaintenanceState.Status -eq "Blocked")
+        {
+            $blockDetail = if ($context.MaintenanceState.UnsafeLink) {
+                "The live tweak path is a real directory and will not be replaced: $linkPath"
+            } else {
+                $context.MaintenanceState.BlockDetail
+            }
+            [Console]::Error.WriteLine(
+                "Blocked [$($context.MaintenanceState.BlockReason)]: $blockDetail")
+            exit 2
+        }
         exit 0
     }
 
     if ($context.MaintenanceState.Status -eq "Blocked")
     {
-        if ($context.MaintenanceState.UnsafeLink)
-        {
-            [Console]::Error.WriteLine("Blocked: the live tweak path is a real directory and will not be replaced: $linkPath")
+        $blockDetail = if ($context.MaintenanceState.UnsafeLink) {
+            "The live tweak path is a real directory and will not be replaced: $linkPath"
+        } else {
+            $context.MaintenanceState.BlockDetail
         }
-        else
-        {
-            [Console]::Error.WriteLine("Blocked: Codex is running from the target managed mirror. Close Codex and run this script again.")
-        }
+        [Console]::Error.WriteLine(
+            "Blocked [$($context.MaintenanceState.BlockReason)]: $blockDetail")
         exit 2
     }
 
     $injectionChanged = $false
     if ($context.MaintenanceState.InjectionRequired)
     {
-        $repairArguments = @("repair", "--force", "--app", $appLayout.OfficialAppRoot)
-        Invoke-CodexPlusPlus -CommandInfo $command -Arguments $repairArguments | ForEach-Object { Write-Host $_ }
+        $repairPlan = Get-CodexRepairPlan `
+            -AppLayout $appLayout `
+            -CodexState $context.CodexState `
+            -InjectionRequired $context.MaintenanceState.InjectionRequired `
+            -MirrorComplete (Test-CodexMirrorComplete `
+                -AppLayout $appLayout `
+                -LaunchLayout $launchLayout)
+        $repairArguments = @(
+            "repair",
+            "--force",
+            "--app",
+            $repairPlan.TargetAppRoot)
+        $mutationResult = Invoke-CodexMutationSafely `
+            -Mutation {
+                Invoke-CodexPlusPlus `
+                    -CommandInfo $command `
+                    -Arguments $repairArguments
+            } `
+            -FailureObservation {
+                Get-CodexPostFailureObservation `
+                    -StatePath $statePath `
+                    -StatusQuery {
+                        Invoke-CodexPlusPlus `
+                            -CommandInfo $command `
+                            -Arguments @("status")
+                    } `
+                    -AppLayout $appLayout `
+                    -LaunchLayout $launchLayout
+            }
+        if (!$mutationResult.Invoked)
+        {
+            [Console]::Error.WriteLine(
+                "Blocked [$($mutationResult.BlockReason)]: " +
+                $mutationResult.FailureReason)
+            exit 2
+        }
+        if (!$mutationResult.Succeeded)
+        {
+            $observation = $mutationResult.FailureObservation |
+                ConvertTo-Json -Compress -Depth 4
+            throw "$($mutationResult.ErrorMessage) Post-failure observation: $observation"
+        }
+        $mutationResult.Output | ForEach-Object { Write-Host $_ }
         $injectionChanged = $true
     }
 
+    $processSnapshot = Get-CodexProcessSnapshot
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
         -AppLayout $appLayout `
@@ -170,7 +232,15 @@ try
         -ExpectedTweakPath $expectedTweakPath `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath
+        -StartMenuShortcutPath $startMenuShortcutPath `
+        -ProcessSnapshot $processSnapshot
+    if ($context.MaintenanceState.Status -eq "Blocked")
+    {
+        [Console]::Error.WriteLine(
+            "Blocked [$($context.MaintenanceState.BlockReason)]: " +
+            $context.MaintenanceState.BlockDetail)
+        exit 2
+    }
     if ($context.MaintenanceState.InjectionRequired)
     {
         throw "Codex++ repair completed but the latest managed mirror is not current."
@@ -190,6 +260,7 @@ try
         if ($desktopShortcutRemoved) { Write-Host "Removed the legacy managed desktop shortcut." }
     }
     $linkChanged = Set-TweakJunction -LinkPath $linkPath -ExpectedTarget $expectedTweakPath
+    $processSnapshot = Get-CodexProcessSnapshot
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $command `
         -AppLayout $appLayout `
@@ -198,7 +269,15 @@ try
         -ExpectedTweakPath $expectedTweakPath `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath
+        -StartMenuShortcutPath $startMenuShortcutPath `
+        -ProcessSnapshot $processSnapshot
+    if ($context.MaintenanceState.Status -eq "Blocked")
+    {
+        [Console]::Error.WriteLine(
+            "Blocked [$($context.MaintenanceState.BlockReason)]: " +
+            $context.MaintenanceState.BlockDetail)
+        exit 2
+    }
     if ($context.MaintenanceState.Status -ne "Current")
     {
         throw "Maintenance verification failed with status: $($context.MaintenanceState.Status)"
@@ -217,4 +296,8 @@ catch
 {
     Write-Error $_
     exit 1
+}
+finally
+{
+    Exit-CodexMaintenanceLock -LockHandle $maintenanceLock
 }
