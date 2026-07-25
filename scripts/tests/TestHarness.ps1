@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 
 $script:TestCount = 0
 $script:FailureCount = 0
+$script:SkippedCount = 0
 
 function Test-Case
 {
@@ -18,6 +19,15 @@ function Test-Case
         $script:FailureCount++
         Write-Host "FAIL $Name`n$($_.Exception.Message)" -ForegroundColor Red
     }
+}
+
+function Skip-TestCase
+{
+    param([string] $Name, [string] $Reason)
+
+    $script:TestCount++
+    $script:SkippedCount++
+    Write-Host "SKIP $Name`n$Reason" -ForegroundColor Yellow
 }
 
 function Assert-True
@@ -53,6 +63,6 @@ function Assert-Throws
 
 function Complete-Tests
 {
-    Write-Host "$script:TestCount tests, $script:FailureCount failures"
+    Write-Host "$script:TestCount tests, $script:FailureCount failures, $script:SkippedCount skipped"
     if ($script:FailureCount -gt 0) { exit 1 }
 }

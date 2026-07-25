@@ -21,14 +21,15 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - name: Check out unity-links
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
+          package-manager-cache: false
 
       - name: Require master
         shell: pwsh
@@ -43,6 +44,8 @@ jobs:
 
       - name: Run PowerShell tests
         shell: pwsh
+        env:
+          UNITY_LINKS_SKIP_UNITY_PROJECT_TESTS: "1"
         run: pwsh -NoProfile -File ./scripts/tests/Run-Tests.ps1
 
       - name: Run Codex tweak tests
@@ -58,7 +61,7 @@ jobs:
         run: git diff --check
 
       - name: Check out pinned Codex++
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: b-nnett/codex-plusplus
           ref: f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7
@@ -111,14 +114,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          $existingRelease = gh release list `
+          $existingReleaseTag = gh release list `
               --repo $env:GITHUB_REPOSITORY `
               --limit 100 `
-              --json tagName,url `
-              --jq ".[] | select(.tagName == `"$env:RELEASE_TAG`") | .url"
-          if ($existingRelease)
+              --json tagName `
+              --jq ".[] | select(.tagName == `"$env:RELEASE_TAG`") | .tagName"
+          if ($existingReleaseTag)
           {
-              throw "Release already exists: $existingRelease"
+              throw "Release already exists for tag: $existingReleaseTag"
           }
 
           $releaseUrl = gh release create $env:RELEASE_TAG `

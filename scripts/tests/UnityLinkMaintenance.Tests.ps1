@@ -4,6 +4,18 @@ $ErrorActionPreference = "Stop"
 $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) "UnityLinkMaintenance.psm1"
 Import-Module $modulePath -Force
 
+function Unity-Project-TestCase
+{
+    param([string] $Name, [scriptblock] $Body)
+
+    if ($env:UNITY_LINKS_SKIP_UNITY_PROJECT_TESTS -eq "1")
+    {
+        Skip-TestCase -Name $Name -Reason "Requires unity-links to be located inside a real Unity project."
+        return
+    }
+    Test-Case -Name $Name -Body $Body
+}
+
 Test-Case "repository layout follows its supplied root" {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) "moved-unity-links"
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $root
@@ -159,6 +171,11 @@ Test-Case "release workflow is manual guarded and draft-only" {
         "workflow_dispatch:",
         "contents: write",
         "windows-latest",
+        "actions/checkout@v6",
+        "actions/setup-node@v6",
+        'node-version: "24"',
+        "package-manager-cache: false",
+        'UNITY_LINKS_SKIP_UNITY_PROJECT_TESTS: "1"',
         "refs/heads/master",
         "scripts/release/validate-release.mjs",
         "scripts/tests/Run-Tests.ps1",
@@ -175,8 +192,23 @@ Test-Case "release workflow is manual guarded and draft-only" {
         Assert-True ($workflow.Contains($text)) "Release workflow is missing: $text"
     }
     Assert-True (!$workflow.Contains("--draft=false"))
+    Assert-True (!$workflow.Contains("actions/checkout@v4"))
+    Assert-True (!$workflow.Contains("actions/setup-node@v4"))
     Assert-True (!$workflow.Contains("git fetch --force"))
     Assert-True (!$workflow.Contains("pull_request:"))
+    Assert-True (!$workflow.Contains("--json tagName,url"))
+}
+
+Test-Case "test harness reports intentionally skipped Unity project integration" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $harness = Get-Content -LiteralPath (Join-Path $repositoryRoot "scripts/tests/TestHarness.ps1") -Raw
+    $maintenanceTests = Get-Content `
+        -LiteralPath (Join-Path $repositoryRoot "scripts/tests/UnityLinkMaintenance.Tests.ps1") -Raw
+
+    Assert-True ($harness.Contains("function Skip-TestCase"))
+    Assert-True ($harness.Contains('$script:SkippedCount'))
+    Assert-True ($maintenanceTests.Contains("function Unity-Project-TestCase"))
+    Assert-True ($maintenanceTests.Contains("UNITY_LINKS_SKIP_UNITY_PROJECT_TESTS"))
 }
 
 Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
@@ -191,7 +223,7 @@ Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
     Assert-Equal $expected $actual
 }
 
-Test-Case "finds the real Unity project above the current repository" {
+Unity-Project-TestCase "finds the real Unity project above the current repository" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $projectRoot = Find-UnityProjectRoot -StartPath $repositoryRoot
 
@@ -323,7 +355,7 @@ Test-Case "reports ACL denial separately and restores original manifest bytes" {
     }
 }
 
-Test-Case "Unity CheckOnly does not mutate the manifest" {
+Unity-Project-TestCase "Unity CheckOnly does not mutate the manifest" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $projectRoot = Find-UnityProjectRoot -StartPath $repositoryRoot
     $manifest = Join-Path $projectRoot "Packages/manifest.json"
@@ -338,7 +370,7 @@ Test-Case "Unity CheckOnly does not mutate the manifest" {
     Assert-Equal $before (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash
 }
 
-Test-Case "Unity CheckOnly accepts an explicit real project path" {
+Unity-Project-TestCase "Unity CheckOnly accepts an explicit real project path" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $projectRoot = Find-UnityProjectRoot -StartPath $repositoryRoot
     $manifest = Join-Path $projectRoot "Packages/manifest.json"
