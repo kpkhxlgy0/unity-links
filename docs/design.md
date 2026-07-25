@@ -197,7 +197,7 @@ so a digest collision or incorrectly routed request cannot cross projects.
 The tweak uses id `com.kpk.unity-asset-links`, version `0.1.0`, `minRuntime: "1.0.0"`, and `scope: "both"`. Its exact
 permission list is `["ipc", "filesystem"]`; version 0.1.0 does not add a settings page. Codex++ 1.0.0 requires a
 syntactically valid `githubRepo` even for a local development tweak, so the local-only manifest uses
-`kpk-local/unity-asset-links`. A failed advisory release lookup must not affect loading or link handling.
+`kpkhxlgy0/unity-links`. A failed advisory release lookup must not affect loading or link handling.
 
 ## Verification
 

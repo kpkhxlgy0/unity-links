@@ -36,7 +36,8 @@ Test-Case "maintainer checks stay project-neutral and avoid temporary Unity proj
         (Join-Path $repositoryRoot "scripts/tests/UnityLinkMaintenance.Tests.ps1"),
         (Join-Path $repositoryRoot "scripts/tests/UninjectCheckOnly.Integration.ps1"),
         (Join-Path $repositoryRoot "docs/design.md"),
-        (Join-Path $repositoryRoot "README.md"))
+        (Join-Path $repositoryRoot "README.md"),
+        (Join-Path $repositoryRoot "README.zh-CN.md"))
 
     foreach ($file in $files)
     {
@@ -85,24 +86,39 @@ Test-Case "Unity installer delegates transactional writes without version-contro
     Assert-True (!$installerText.Contains($p4Command))
 }
 
-Test-Case "README covers project-neutral first install and relocation" {
+Test-Case "bilingual READMEs cover project-neutral first install and relocation" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-    $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.md") -Raw
+    $englishReadme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.md") -Raw
+    $chineseReadme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.zh-CN.md") -Raw
     $legacyLayout = "File" + "Packages"
-    $requiredText = @(
+    $sharedText = @(
         "https://github.com/kpkhxlgy0/unity-links.git",
         "PowerShell 7",
         "Node.js 20",
         "npm",
         'New-Item -ItemType Directory -Path (Join-Path $unityProject "Tools")',
         "New-Item -ItemType Directory -Path D:\Tools",
-        "-UnityProject",
+        "-UnityProject")
+    $requiredEnglishText = @(
+        "[简体中文](README.zh-CN.md)",
+        "Start menu",
+        "Moving the Repository",
+        "wait for package compilation to finish")
+    $requiredChineseText = @(
+        "[English](README.md)",
         "开始菜单",
         "移动仓库",
         "等待 Unity 完成 package 编译")
 
-    foreach ($text in $requiredText) { Assert-True ($readme.Contains($text)) "README is missing: $text" }
-    Assert-True (!$readme.Contains($legacyLayout))
+    foreach ($text in $sharedText)
+    {
+        Assert-True ($englishReadme.Contains($text)) "English README is missing: $text"
+        Assert-True ($chineseReadme.Contains($text)) "Chinese README is missing: $text"
+    }
+    foreach ($text in $requiredEnglishText) { Assert-True ($englishReadme.Contains($text)) "English README is missing: $text" }
+    foreach ($text in $requiredChineseText) { Assert-True ($chineseReadme.Contains($text)) "Chinese README is missing: $text" }
+    Assert-True (!$englishReadme.Contains($legacyLayout))
+    Assert-True (!$chineseReadme.Contains($legacyLayout))
 }
 
 Test-Case "finds the nearest matching ancestor without filesystem fixtures" {
