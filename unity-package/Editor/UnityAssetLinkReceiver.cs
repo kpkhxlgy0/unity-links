@@ -196,28 +196,60 @@ namespace KPK.CodexUnityLink.Editor
             if (!UnityAssetLinkPath.TryResolveAsset(projectRoot, request, out var assetPath, out error))
                 return SerializeFailure(error);
 
-            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
-            if (asset == null)
+            bool opened;
+            if (assetPath.StartsWith("ProjectSettings/", StringComparison.Ordinal))
             {
-                error = UnityAssetLinkProtocol.Failure(
-                    request.requestId,
-                    "assetMissing",
-                    "Unity could not load the requested asset.");
-                return SerializeFailure(error);
+                opened = OpenProjectSettings();
             }
-
-            var opened = OpenAsset(asset, request.line, request.column);
+            else if (assetPath.StartsWith("Packages/", StringComparison.Ordinal))
+            {
+                opened = OpenPackageManager(assetPath);
+            }
+            else
+            {
+                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                if (asset == null)
+                {
+                    error = UnityAssetLinkProtocol.Failure(
+                        request.requestId,
+                        "assetMissing",
+                        "Unity could not load the requested asset.");
+                    return SerializeFailure(error);
+                }
+                opened = OpenAsset(asset, request.line, request.column);
+            }
 
             if (!opened)
             {
                 error = UnityAssetLinkProtocol.Failure(
                     request.requestId,
                     "openFailed",
-                    "Unity did not accept the asset open request.");
+                    "Unity did not accept the link open request.");
                 return SerializeFailure(error);
             }
             return UnityAssetLinkProtocol.Serialize(
                 UnityAssetLinkProtocol.Success(request.requestId));
+        }
+
+        private static bool OpenProjectSettings()
+        {
+            var window = SettingsService.OpenProjectSettings();
+            if (window == null) return false;
+            window.Show();
+            window.Focus();
+            return true;
+        }
+
+        private static bool OpenPackageManager(string assetPath)
+        {
+            UnityEditor.PackageManager.UI.Window.Open(GetPackageToSelect(assetPath));
+            return true;
+        }
+
+        private static string GetPackageToSelect(string assetPath)
+        {
+            var segments = assetPath.Split('/');
+            return segments.Length >= 3 ? segments[1] : null;
         }
 
         private static bool OpenAsset(UnityEngine.Object asset, int line, int column)

@@ -16,7 +16,7 @@ Test-Case "Unity receiver dispatches AnimationClip assets without changing gener
     $receiverPath = Join-Path $repositoryRoot "unity-package/Editor/UnityAssetLinkReceiver.cs"
     $receiver = Get-Content -LiteralPath $receiverPath -Raw
 
-    Assert-True ($receiver.Contains("var opened = OpenAsset(asset, request.line, request.column)"))
+    Assert-True ($receiver.Contains("opened = OpenAsset(asset, request.line, request.column)"))
     Assert-True ($receiver.Contains("if (asset is AnimationClip clip)"))
     Assert-True ($receiver.Contains("if (line <= 0) return AssetDatabase.OpenAsset(asset)"))
     Assert-True ($receiver.Contains("if (column <= 0) return AssetDatabase.OpenAsset(asset, line)"))

@@ -12,6 +12,15 @@ function createVirtualFs({ files = [], directories = [] }) {
   const normalize = (value) => windowsPath.normalize(value).toLowerCase();
   const fileKeys = new Set(files.map(normalize));
   const directoryKeys = new Set(directories.map(normalize));
+  for (const value of [...files, ...directories]) {
+    let current = windowsPath.dirname(windowsPath.normalize(value));
+    while (true) {
+      directoryKeys.add(normalize(current));
+      const parent = windowsPath.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
 
   return {
     existsSync(value) {
@@ -28,6 +37,11 @@ function createVirtualFs({ files = [], directories = [] }) {
       const key = normalize(value);
       if (!fileKeys.has(key) && !directoryKeys.has(key)) throw new Error("Path not found");
       return { isFile: () => fileKeys.has(key) };
+    },
+    lstatSync(value) {
+      const key = normalize(value);
+      if (!fileKeys.has(key) && !directoryKeys.has(key)) throw new Error("Path not found");
+      return { isSymbolicLink: () => false };
     },
   };
 }
@@ -59,9 +73,16 @@ test("rejects web URLs and relative paths", () => {
   assert.equal(__test.parseDestination("Assets/a.prefab"), null);
 });
 
-test("recognizes only a complete Assets segment", () => {
-  assert.equal(__test.hasAssetsSegment("D:\\p\\Assets\\a.prefab"), true);
-  assert.equal(__test.hasAssetsSegment("D:\\p\\AssetsBackup\\a.prefab"), false);
+test("recognizes supported Unity project folders only as complete segments", () => {
+  assert.equal(__test.hasSupportedProjectSegment("D:\\p\\Assets\\a.prefab"), true);
+  assert.equal(
+    __test.hasSupportedProjectSegment("D:\\p\\ProjectSettings\\EditorBuildSettings.asset"),
+    true,
+  );
+  assert.equal(__test.hasSupportedProjectSegment("D:\\p\\Packages\\manifest.json"), true);
+  assert.equal(__test.hasSupportedProjectSegment("D:\\p\\AssetsBackup\\a.prefab"), false);
+  assert.equal(__test.hasSupportedProjectSegment("D:\\p\\ProjectSettingsBackup\\a.asset"), false);
+  assert.equal(__test.hasSupportedProjectSegment("D:\\p\\PackagesBackup\\manifest.json"), false);
 });
 
 test("accepts only an unmodified primary click", () => {
@@ -104,9 +125,10 @@ test("builds a deterministic case-insensitive project Pipe name", () => {
 test("finds the nearest Unity root and produces an Assets path", () => {
   const root = "D:\\Projects\\ExampleUnityProject";
   const assets = windowsPath.join(root, "Assets");
-  const file = windowsPath.join(assets, "Data", "A.asset");
+  const data = windowsPath.join(assets, "Data");
+  const file = windowsPath.join(data, "A.asset");
   const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
-  const fsApi = createVirtualFs({ files: [file, version], directories: [assets] });
+  const fsApi = createVirtualFs({ files: [file, version], directories: [assets, data] });
 
   const result = __test.findUnityTarget(file, fsApi, windowsPath);
 
@@ -114,7 +136,41 @@ test("finds the nearest Unity root and produces an Assets path", () => {
   assert.equal(result.assetPath, "Assets/Data/A.asset");
 });
 
-test("does not route a directory or a file outside Assets", () => {
+test("finds the nearest Unity root and produces a ProjectSettings path", () => {
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const settings = windowsPath.join(root, "ProjectSettings");
+  const file = windowsPath.join(settings, "EditorBuildSettings.asset");
+  const version = windowsPath.join(settings, "ProjectVersion.txt");
+  const fsApi = createVirtualFs({
+    files: [file, version],
+    directories: [assets, settings],
+  });
+
+  const result = __test.findUnityTarget(file, fsApi, windowsPath);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.assetPath, "ProjectSettings/EditorBuildSettings.asset");
+});
+
+test("finds the nearest Unity root and produces a Packages path", () => {
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const packages = windowsPath.join(root, "Packages");
+  const file = windowsPath.join(packages, "manifest.json");
+  const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({
+    files: [file, version],
+    directories: [assets, packages],
+  });
+
+  const result = __test.findUnityTarget(file, fsApi, windowsPath);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.assetPath, "Packages/manifest.json");
+});
+
+test("does not route a directory or a file outside supported Unity project folders", () => {
   const root = "D:\\Projects\\ExampleUnityProject";
   const assets = windowsPath.join(root, "Assets");
   const outside = windowsPath.join(root, "outside.txt");
@@ -123,6 +179,87 @@ test("does not route a directory or a file outside Assets", () => {
 
   assert.equal(__test.findUnityTarget(assets, fsApi, windowsPath).code, "notAssetFile");
   assert.equal(__test.findUnityTarget(outside, fsApi, windowsPath).code, "notAssetFile");
+});
+
+test("does not route a path through a reparse-point alias inside a supported folder", () => {
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const aliasRoot = windowsPath.join(assets, "Alias");
+  const aliasFile = windowsPath.join(aliasRoot, "A.asset");
+  const targetRoot = windowsPath.join(assets, "Target");
+  const targetFile = windowsPath.join(targetRoot, "A.asset");
+  const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({
+    files: [aliasFile, targetFile, version],
+    directories: [assets, aliasRoot, targetRoot],
+  });
+  fsApi.realpathSync = (value) => (
+    windowsPath.normalize(value).toLowerCase() === aliasFile.toLowerCase()
+      ? targetFile
+      : windowsPath.normalize(value)
+  );
+  fsApi.lstatSync = (value) => ({
+    isSymbolicLink: () => (
+      windowsPath.normalize(value).toLowerCase() === aliasRoot.toLowerCase()
+    ),
+  });
+
+  const result = __test.findUnityTarget(aliasFile, fsApi, windowsPath);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "notAssetFile");
+});
+
+test("does not route a path containing a lexical traversal segment", () => {
+  const root = "D:\\Projects\\ExampleUnityProject";
+  const assets = windowsPath.join(root, "Assets");
+  const packages = windowsPath.join(root, "Packages");
+  const file = windowsPath.join(packages, "manifest.json");
+  const traversing = root + "\\ProjectSettings\\..\\Packages\\manifest.json";
+  const version = windowsPath.join(root, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({
+    files: [file, version],
+    directories: [assets, packages],
+  });
+
+  const result = __test.findUnityTarget(traversing, fsApi, windowsPath);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "notAssetFile");
+});
+
+test("does not route a path through a Unity project-root junction", () => {
+  const aliasRoot = "D:\\Projects\\AliasUnityProject";
+  const realRoot = "D:\\Projects\\RealUnityProject";
+  const aliasAssets = windowsPath.join(aliasRoot, "Assets");
+  const realAssets = windowsPath.join(realRoot, "Assets");
+  const aliasFile = windowsPath.join(aliasAssets, "A.asset");
+  const realFile = windowsPath.join(realAssets, "A.asset");
+  const aliasVersion = windowsPath.join(aliasRoot, "ProjectSettings", "ProjectVersion.txt");
+  const realVersion = windowsPath.join(realRoot, "ProjectSettings", "ProjectVersion.txt");
+  const fsApi = createVirtualFs({
+    files: [aliasFile, realFile, aliasVersion, realVersion],
+    directories: [aliasAssets, realAssets],
+  });
+  const baseRealpathSync = fsApi.realpathSync;
+  const baseLstatSync = fsApi.lstatSync;
+  fsApi.realpathSync = (value) => {
+    const normalized = windowsPath.normalize(value).toLowerCase();
+    if (normalized === aliasFile.toLowerCase()) return realFile;
+    if (normalized === aliasRoot.toLowerCase()) return realRoot;
+    return baseRealpathSync(value);
+  };
+  fsApi.lstatSync = (value) => {
+    if (windowsPath.normalize(value).toLowerCase() === aliasRoot.toLowerCase()) {
+      return { isSymbolicLink: () => true };
+    }
+    return baseLstatSync(value);
+  };
+
+  const result = __test.findUnityTarget(aliasFile, fsApi, windowsPath);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "notAssetFile");
 });
 
 test("round trips one newline-delimited request over a Windows Pipe", async () => {
@@ -341,6 +478,132 @@ test("renderer captures Codex file-reference buttons", async () => {
   assert.equal(event.defaultPrevented, true);
   assert.deepEqual(opened, [{
     path: "D:\\Projects\\ExampleUnityProject\\Assets\\Light.prefab",
+    line: 0,
+    column: 0,
+  }]);
+  __test.stopRenderer();
+});
+
+test("renderer captures ProjectSettings file-reference buttons", async () => {
+  const listeners = new Map();
+  const button = {
+    getAttribute(name) {
+      if (name === "data-prompt-link-href") {
+        return "D:/Projects/ExampleUnityProject/ProjectSettings/EditorBuildSettings.asset:8";
+      }
+      return null;
+    },
+  };
+  const documentApi = {
+    body: { append() {} },
+    addEventListener(name, handler) {
+      listeners.set(name, handler);
+    },
+    removeEventListener() {},
+    createElement() {
+      return { dataset: {}, style: {}, remove() {} };
+    },
+  };
+  const opened = [];
+  __test.startRenderer(
+    {
+      ipc: {
+        invoke: async (_channel, destination) => {
+          opened.push(destination);
+          return { ok: true, handled: true, code: "opened" };
+        },
+      },
+    },
+    documentApi,
+  );
+  const event = {
+    button: 0,
+    defaultPrevented: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    target: {
+      closest(selector) {
+        if (selector === '[data-file-reference="true"][data-prompt-link-href]') return button;
+        return null;
+      },
+    },
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopImmediatePropagation() {},
+  };
+
+  listeners.get("click")(event);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(opened, [{
+    path: "D:\\Projects\\ExampleUnityProject\\ProjectSettings\\EditorBuildSettings.asset",
+    line: 8,
+    column: 0,
+  }]);
+  __test.stopRenderer();
+});
+
+test("renderer captures Packages file-reference buttons", async () => {
+  const listeners = new Map();
+  const button = {
+    getAttribute(name) {
+      if (name === "data-prompt-link-href") {
+        return "D:/Projects/ExampleUnityProject/Packages/manifest.json";
+      }
+      return null;
+    },
+  };
+  const documentApi = {
+    body: { append() {} },
+    addEventListener(name, handler) {
+      listeners.set(name, handler);
+    },
+    removeEventListener() {},
+    createElement() {
+      return { dataset: {}, style: {}, remove() {} };
+    },
+  };
+  const opened = [];
+  __test.startRenderer(
+    {
+      ipc: {
+        invoke: async (_channel, destination) => {
+          opened.push(destination);
+          return { ok: true, handled: true, code: "opened" };
+        },
+      },
+    },
+    documentApi,
+  );
+  const event = {
+    button: 0,
+    defaultPrevented: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    target: {
+      closest(selector) {
+        if (selector === '[data-file-reference="true"][data-prompt-link-href]') return button;
+        return null;
+      },
+    },
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopImmediatePropagation() {},
+  };
+
+  listeners.get("click")(event);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(opened, [{
+    path: "D:\\Projects\\ExampleUnityProject\\Packages\\manifest.json",
     line: 0,
     column: 0,
   }]);

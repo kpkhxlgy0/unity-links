@@ -1,25 +1,31 @@
 # Codex++ Unity Asset Link Design
 
 Date: 2026-07-24
+Updated: 2026-07-25
 
 ## Objective
 
 When a user normally clicks a local file link in a Codex Desktop reply, route existing files under a Unity project's
-`Assets` directory through that project's running Unity Editor. Unity must open the asset with
-`AssetDatabase.OpenAsset`, preserving normal Unity double-click behavior such as Prefab Mode, custom skill asset
-editors, scene opening, and the configured external code editor.
+`Assets`, `ProjectSettings`, or `Packages` directory through that project's running Unity Editor. `Assets` files use
+`AssetDatabase.OpenAsset`, `ProjectSettings` files open the Project Settings window, and `Packages` files open the
+Package Manager window.
 
 The solution must detect Unity projects from link paths rather than hard-code a checkout location. It must remain
 small, local-only, and independent from any particular Unity repository.
 
 ## Success Criteria
 
-- A normal left-click on an existing file below `<project>/Assets` reaches the matching running Unity Editor.
-- Unity calls `AssetDatabase.OpenAsset(asset, line, column)` on its main thread.
+- A normal left-click on an existing file below `<project>/Assets`, `<project>/ProjectSettings`, or
+  `<project>/Packages` reaches the matching running Unity Editor.
+- Unity calls `AssetDatabase.OpenAsset(asset, line, column)` for `Assets` files on its main thread.
+- Unity calls `SettingsService.OpenProjectSettings()` for `ProjectSettings` files. Version 0.1.0 does not maintain a
+  filename-to-settings-page mapping.
+- Unity opens Package Manager for `Packages` files. For `Packages/<package-id>/**`, it passes `<package-id>` as the
+  package to select; root files such as `manifest.json` and `packages-lock.json` open the unfiltered window.
 - Multiple open Unity projects route requests independently by canonical project root.
 - If the matching Unity Editor is unavailable, Codex locates the file in Explorer and shows a short explanation.
-- Links outside `Assets`, directory links, modified clicks, and links that cannot be resolved retain Codex's existing
-  behavior wherever possible.
+- Links outside the three supported directories, directory links, modified clicks, and links that cannot be resolved
+  retain Codex's existing behavior wherever possible.
 - The Codex++ tweak validates successfully and has no third-party runtime dependencies.
 - The Unity receiver is Editor-only and does not enter player builds.
 
@@ -62,8 +68,8 @@ The renderer half installs one capture-phase click listener on `document` and re
 It considers only an unmodified primary-button click whose nearest element is a local file anchor. It parses the
 anchor destination into a candidate absolute Windows path plus optional one-based line and column. Supported forms
 include Windows absolute paths, slash-prefixed Windows paths emitted by Markdown renderers, and `file:` URLs. The
-renderer intercepts the click only when the parsed path contains an `Assets` path segment; all other paths retain the
-existing Codex behavior without an asynchronous round trip.
+renderer intercepts the click only when the parsed path contains an `Assets`, `ProjectSettings`, or `Packages` path
+segment; all other paths retain the existing Codex behavior without an asynchronous round trip.
 
 The renderer sends the candidate to the tweak's main half through namespaced Codex++ IPC. It prevents Codex's default
 navigation only after the candidate is recognized as a local absolute file path. The main response determines whether
@@ -75,11 +81,14 @@ Modified clicks, non-file schemes, directories, and unrecognized destinations ar
 
 The main half performs all trusted filesystem and transport work:
 
-1. Canonicalize the candidate and verify that it is an existing file.
-2. Walk upward from the file directory to find a directory containing both `Assets` and
-   `ProjectSettings/ProjectVersion.txt`.
-3. Verify with relative-path semantics that the file is strictly below that project's `Assets` directory.
-4. Convert the absolute file path to a forward-slash Unity asset path beginning with `Assets/`.
+1. Canonicalize the candidate and verify that it is an existing file while retaining the original lexical path for
+   reparse-point checks.
+2. Walk upward independently from the original and canonical file paths to find directories containing both `Assets`
+   and `ProjectSettings/ProjectVersion.txt`; require both roots to resolve to the same project.
+3. Reject lexical traversal and reparse-point segments in the original accepted-root path, then verify with
+   relative-path semantics that the canonical file is strictly below that project's `Assets`, `ProjectSettings`, or
+   `Packages` directory.
+4. Convert the absolute file path to a forward-slash Unity project path beginning with the accepted root name.
 5. Derive the project Pipe name from a stable hash of the case-normalized canonical project root.
 6. Send one request and wait for a bounded response.
 
@@ -94,9 +103,15 @@ domain reload it computes the same Pipe name from `Directory.GetParent(Applicati
 requests in a background task.
 
 Transport callbacks never call Unity APIs directly. A valid request is queued to the Unity main thread. The main-thread
-handler loads the object with `AssetDatabase.LoadAssetAtPath<UnityEngine.Object>` and calls the appropriate overload of
-`AssetDatabase.OpenAsset` for the supplied line and column. This preserves existing `[OnOpenAsset]` handlers, including
-Prefab Mode and registered custom asset editors.
+handler dispatches by the validated first path segment:
+
+- `Assets`: load the object with `AssetDatabase.LoadAssetAtPath<UnityEngine.Object>` and call the appropriate overload
+  of `AssetDatabase.OpenAsset` for the supplied line and column. This preserves existing `[OnOpenAsset]` handlers,
+  including Prefab Mode, registered custom asset editors, scene opening, and the configured external code editor.
+- `ProjectSettings`: call `SettingsService.OpenProjectSettings()` and ignore line and column because settings are
+  edited through Unity's settings UI.
+- `Packages`: call `UnityEditor.PackageManager.UI.Window.Open(packageToSelect)`, deriving `packageToSelect` only from
+  the first directory below `Packages`; pass `null` for files directly below `Packages`.
 
 The server cancels and disposes its listener before assembly reload and when Unity quits, then starts again after the
 next domain load.
@@ -118,6 +133,9 @@ Request fields:
   "column": 0
 }
 ```
+
+The protocol retains the v1 `openAsset` action and `assetPath` field names for compatibility; `assetPath` now carries
+any validated path below one of the three supported project roots.
 
 Response fields:
 
@@ -152,8 +170,9 @@ so a digest collision or incorrectly routed request cannot cross projects.
 - Unity unavailable: use a short connection timeout (target 300 ms), reveal the existing file in Explorer, and show a
   transient Codex notification.
 - File missing: do not send a request; show a concise notification. If a containing directory still exists, reveal it.
-- Malformed or non-asset link: leave the link to Codex's existing behavior.
-- Unity rejects or fails to open an asset: return a structured response, reveal the file, and show the response message.
+- Malformed or unsupported project link: leave the link to Codex's existing behavior.
+- Unity rejects or fails to open a target: return a structured response, reveal the file, and show the response
+  message.
 - Domain reload during a request: the bounded timeout takes the same fallback path; the receiver returns after reload.
 - Logging: failures and lifecycle events go to the Codex++ tweak log or Unity Console. Successful opens do not log by
   default.
@@ -162,12 +181,16 @@ so a digest collision or incorrectly routed request cannot cross projects.
 
 - The transport is local-only and has no TCP listener.
 - The Pipe should be restricted to the current Windows user where the Unity runtime API supports it.
-- Unity independently verifies protocol version, action, exact project root, and containment under its own `Assets`.
+- Unity independently verifies protocol version, action, exact project root, and containment under its own `Assets`,
+  `ProjectSettings`, or `Packages`.
 - The receiver exposes only `openAsset`; it cannot execute commands, scripts, menu items, or arbitrary methods.
 - The request supplies a Unity-relative asset path. Unity reconstructs and validates the corresponding absolute path
   rather than trusting the sender's filesystem claim.
-- Traversal segments are normalized before containment checks. The Unity receiver rejects any asset-path segment with
-  the `ReparsePoint` attribute, preventing a junction or symbolic link from escaping the project root.
+- Empty and traversal segments are rejected before containment checks. The main process requires the lexical and
+  canonical paths to identify the same project and checks the original path with `lstatSync`; the Unity receiver
+  independently rejects any accepted-path segment with the `ReparsePoint` attribute. A junction or symbolic link
+  therefore cannot be used as a Unity-link alias even when its target remains inside an accepted project root or points
+  at another Unity project.
 
 ## Tweak Metadata
 
@@ -181,12 +204,13 @@ syntactically valid `githubRepo` even for a local development tweak, so the loca
 The implementation phase will use:
 
 - Node's built-in test runner for destination parsing, line/column parsing, click eligibility, project-root detection,
-  asset containment, and deterministic Pipe names.
+  supported-file containment, and deterministic Pipe names.
 - `codexplusplus validate-tweak` for manifest and entry validation.
-- A direct protocol client check for success, timeout, malformed request, wrong-project, and outside-Assets responses.
+- A direct protocol client check for success, timeout, malformed request, wrong-project, and unsupported-path
+  responses.
 - Unity refresh/compile and Console inspection after adding the local package to a project.
-- Manual open checks for one Prefab, one registered custom asset, and one `.cs` file, confirming each reaches the
-  normal Unity `AssetDatabase.OpenAsset` route.
+- Manual open checks for one Prefab, one registered custom asset, one `.cs` file, one Project Settings file, one root
+  Packages file, and one package-owned file, confirming each reaches its designed Unity UI route.
 
 Automated Unity test suites and battle regression tests are outside this task unless explicitly requested.
 
@@ -212,7 +236,7 @@ the injection script and the Unity installer for every affected project.
 ## Explicit Non-Goals for Version 0.1.0
 
 - Starting, installing, or selecting a Unity Editor version.
-- Opening directories or files from `Packages`, `ProjectSettings`, or outside the Unity project.
+- Opening directories, files from other project-root directories, or files outside the Unity project.
 - macOS or Linux support.
 - HTTP transport, remote access, or an MCP server.
 - Custom extension mappings, context menus, or a settings page.

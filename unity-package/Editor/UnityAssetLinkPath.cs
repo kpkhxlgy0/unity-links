@@ -50,39 +50,48 @@ namespace KPK.CodexUnityLink.Editor
 
             var normalizedAssetPath = (request.assetPath ?? string.Empty).Replace('\\', '/');
             var segments = normalizedAssetPath.Split('/');
+            var supportedRootName = segments.Length > 0
+                && (segments[0] == "Assets"
+                    || segments[0] == "ProjectSettings"
+                    || segments[0] == "Packages")
+                    ? segments[0]
+                    : null;
             if (segments.Length < 2
-                || segments[0] != "Assets"
-                || Array.Exists(segments, segment => segment == ".." || segment == "."))
+                || supportedRootName == null
+                || Array.Exists(
+                    segments,
+                    segment => string.IsNullOrEmpty(segment) || segment == ".." || segment == "."))
             {
                 error = UnityAssetLinkProtocol.Failure(
                     request.requestId,
                     "assetOutsideProject",
-                    "The requested path is outside this project's Assets directory.");
+                    "The requested path is outside this project's supported Unity directories.");
                 return false;
             }
 
-            var assetsRoot = Path.Combine(currentProjectRoot, "Assets");
-            if ((File.GetAttributes(assetsRoot) & FileAttributes.ReparsePoint) != 0)
+            var supportedRoot = Path.Combine(currentProjectRoot, supportedRootName);
+            if ((File.GetAttributes(supportedRoot) & FileAttributes.ReparsePoint) != 0)
             {
                 error = UnityAssetLinkProtocol.Failure(
                     request.requestId,
                     "assetOutsideProject",
-                    "A reparse-point Assets directory is not accepted.");
+                    $"A reparse-point {supportedRootName} directory is not accepted.");
                 return false;
             }
             var absolute = Path.GetFullPath(
                 Path.Combine(currentProjectRoot, normalizedAssetPath.Replace('/', Path.DirectorySeparatorChar)));
-            var assetsPrefix = assetsRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!absolute.StartsWith(assetsPrefix, StringComparison.OrdinalIgnoreCase))
+            var supportedPrefix = supportedRoot.TrimEnd(Path.DirectorySeparatorChar)
+                                  + Path.DirectorySeparatorChar;
+            if (!absolute.StartsWith(supportedPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 error = UnityAssetLinkProtocol.Failure(
                     request.requestId,
                     "assetOutsideProject",
-                    "The requested path escapes this project's Assets directory.");
+                    $"The requested path escapes this project's {supportedRootName} directory.");
                 return false;
             }
 
-            var current = assetsRoot;
+            var current = supportedRoot;
             for (var i = 1; i < segments.Length; i++)
             {
                 current = Path.Combine(current, segments[i]);

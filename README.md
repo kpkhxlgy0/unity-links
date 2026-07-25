@@ -1,7 +1,8 @@
 # Unity Asset Links
 
-让 Codex Desktop 回复中的本地文件链接在属于 Unity 项目 `Assets` 目录时，通过对应的 Unity Editor 打开。
-Prefab 会沿用 Unity 的 Prefab 打开逻辑，注册了自定义编辑器的 `.asset` 会进入对应编辑器，代码链接保留行列信息。
+让 Codex Desktop 回复中的本地文件链接在属于 Unity 项目 `Assets`、`ProjectSettings` 或 `Packages` 目录时，
+通过对应的 Unity Editor 打开。`Assets` 沿用 Unity 的普通资源打开逻辑，`ProjectSettings` 打开 Project
+Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 
 ## 前置条件
 
@@ -149,6 +150,10 @@ Unity 项目打开且 package 编译完成后，可检查该项目的 Named Pipe
 ```powershell
 node .\codex-tweak\scripts\send-open.js `
     D:\Projects\ExampleUnityProject\Assets\Example.prefab
+node .\codex-tweak\scripts\send-open.js `
+    D:\Projects\ExampleUnityProject\ProjectSettings\EditorBuildSettings.asset:8
+node .\codex-tweak\scripts\send-open.js `
+    D:\Projects\ExampleUnityProject\Packages\manifest.json
 ```
 
 成功响应包含 `"ok":true` 和 `"code":"opened"`。

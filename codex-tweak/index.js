@@ -1,4 +1,5 @@
 const PIPE_PREFIX = "kpk-codex-unity-link-v1-";
+const SUPPORTED_ROOT_NAMES = ["Assets", "ProjectSettings", "Packages"];
 let rendererCleanup;
 const replayBypass = new WeakSet();
 const notices = new Set();
@@ -52,8 +53,8 @@ function splitLineColumn(value) {
   return { path: value, line: 0, column: 0 };
 }
 
-function hasAssetsSegment(filePath) {
-  return /[\\/]Assets[\\/]/i.test(filePath);
+function hasSupportedProjectSegment(filePath) {
+  return /[\\/](?:Assets|ProjectSettings|Packages)[\\/]/i.test(filePath);
 }
 
 function isEligibleClick(event) {
@@ -76,7 +77,57 @@ function pipeNameForProjectRoot(projectRoot, cryptoApi, pathApi) {
   return PIPE_PREFIX + digest;
 }
 
+function hasTraversalSegment(candidatePath) {
+  return candidatePath.split(/[\\/]/).some((segment) => segment === "." || segment === "..");
+}
+
+function findUnityProjectRoot(filePath, fsApi, pathApi) {
+  let current = pathApi.dirname(pathApi.resolve(filePath));
+  while (true) {
+    const assets = pathApi.join(current, "Assets");
+    const version = pathApi.join(current, "ProjectSettings", "ProjectVersion.txt");
+    if (fsApi.existsSync(assets) && fsApi.existsSync(version)) return current;
+    const parent = pathApi.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function findSupportedProjectPath(filePath, projectRoot, pathApi) {
+  const resolved = pathApi.resolve(filePath);
+  for (const rootName of SUPPORTED_ROOT_NAMES) {
+    const supportedRoot = pathApi.join(projectRoot, rootName);
+    const relative = pathApi.relative(supportedRoot, resolved);
+    if (relative !== "" && !relative.startsWith("..") && !pathApi.isAbsolute(relative)) {
+      return { rootName, supportedRoot, relative };
+    }
+  }
+  return null;
+}
+
+function hasReparsePointSegment(candidatePath, projectRoot, fsApi, pathApi) {
+  const target = findSupportedProjectPath(candidatePath, projectRoot, pathApi);
+  if (!target) return false;
+
+  try {
+    if (fsApi.lstatSync(projectRoot).isSymbolicLink()) return true;
+    let current = target.supportedRoot;
+    if (fsApi.lstatSync(current).isSymbolicLink()) return true;
+    for (const segment of target.relative.split(pathApi.sep)) {
+      current = pathApi.join(current, segment);
+      if (fsApi.lstatSync(current).isSymbolicLink()) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function findUnityTarget(candidatePath, fsApi, pathApi) {
+  if (hasTraversalSegment(candidatePath)) {
+    return { ok: false, handled: false, code: "notAssetFile" };
+  }
+
   let absolute;
   try {
     absolute = fsApi.realpathSync(candidatePath);
@@ -92,33 +143,35 @@ function findUnityTarget(candidatePath, fsApi, pathApi) {
     };
   }
 
-  let current = pathApi.dirname(absolute);
-  let projectRoot;
-  while (true) {
-    const assets = pathApi.join(current, "Assets");
-    const version = pathApi.join(current, "ProjectSettings", "ProjectVersion.txt");
-    if (fsApi.existsSync(assets) && fsApi.existsSync(version)) {
-      projectRoot = current;
-      break;
-    }
-    const parent = pathApi.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
+  const projectRoot = findUnityProjectRoot(absolute, fsApi, pathApi);
   if (!projectRoot) {
     return { ok: false, handled: false, code: "notUnityProject" };
   }
 
-  const assetsRoot = pathApi.join(projectRoot, "Assets");
-  const relative = pathApi.relative(assetsRoot, absolute);
-  if (relative === "" || relative.startsWith("..") || pathApi.isAbsolute(relative)) {
+  const originalProjectRoot = findUnityProjectRoot(candidatePath, fsApi, pathApi);
+  if (!originalProjectRoot) {
+    return { ok: false, handled: false, code: "notUnityProject" };
+  }
+  let canonicalOriginalProjectRoot;
+  try {
+    canonicalOriginalProjectRoot = fsApi.realpathSync(originalProjectRoot);
+  } catch {
+    return { ok: false, handled: false, code: "notUnityProject" };
+  }
+  if (normalizeProjectRoot(canonicalOriginalProjectRoot, pathApi)
+      !== normalizeProjectRoot(projectRoot, pathApi)
+      || !findSupportedProjectPath(candidatePath, originalProjectRoot, pathApi)
+      || hasReparsePointSegment(candidatePath, originalProjectRoot, fsApi, pathApi)) {
     return { ok: false, handled: false, code: "notAssetFile" };
   }
+
+  const target = findSupportedProjectPath(absolute, projectRoot, pathApi);
+  if (!target) return { ok: false, handled: false, code: "notAssetFile" };
   return {
     ok: true,
     absolutePath: absolute,
     projectRoot,
-    assetPath: "Assets/" + relative.split(pathApi.sep).join("/"),
+    assetPath: target.rootName + "/" + target.relative.split(pathApi.sep).join("/"),
   };
 }
 
@@ -307,7 +360,7 @@ function startRenderer(api, documentApi) {
         || link.getAttribute("data-prompt-link-href")
         || link.href,
     );
-    if (!parsed || !hasAssetsSegment(parsed.path)) return;
+    if (!parsed || !hasSupportedProjectSegment(parsed.path)) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -359,10 +412,11 @@ module.exports = {
   __test: {
     parseDestination,
     splitLineColumn,
-    hasAssetsSegment,
+    hasSupportedProjectSegment,
     isEligibleClick,
     normalizeProjectRoot,
     pipeNameForProjectRoot,
+    hasReparsePointSegment,
     findUnityTarget,
     sendPipeRequest,
     handleOpenAsset,
