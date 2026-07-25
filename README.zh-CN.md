@@ -160,6 +160,20 @@ node .\codex-tweak\scripts\send-open.js `
 
 成功响应包含 `"ok":true` 和 `"code":"opened"`。
 
+## 发布流程
+
+开始发布前，先在 `codex-tweak/manifest.json`、`codex-tweak/package.json` 和
+`unity-package/package.json` 中更新并提交同一个稳定版本号。
+
+1. 确认该版本提交已经位于 `master`。
+2. 打开仓库的 GitHub Actions 页面，从 `master` 运行 `Release` 工作流。
+3. 输入不带前导 `v` 的版本号，例如 `0.1.0`。
+4. 等待全部校验和测试通过，并由工作流创建 Draft Release。
+5. 检查自动生成的发布说明，准备完成后再手动发布该 Draft Release。
+
+不要移动或复用发布标签。工作流重试时，如果所需标签已指向同一提交，可以继续使用；标签指向其他提交时会失败。
+Codex++ 的更新检查只提供提示，并且只能看到已经发布的 Releases，因此 Draft Release 不会向用户提示更新。
+
 ## 安全边界与退出码
 
 所有 Codex 维护脚本都不终止、启动或自动控制 Codex，也不直接修改 WindowsApps。Codex++ 1.0.0 不应在没有
@@ -168,3 +182,7 @@ node .\codex-tweak\scripts\send-open.js `
 - `0`：检测成功且未被阻塞，或普通模式操作成功；检查模式下仍应读取打印状态。
 - `1`：输入、环境、校验或操作失败，未达到可验证的目标状态。
 - `2`：安全阻塞，需要按打印原因手动关闭 Codex，或处理不安全目录/缺失命令后重试。
+
+## 开源协议
+
+本项目采用 [MIT License](LICENSE)。

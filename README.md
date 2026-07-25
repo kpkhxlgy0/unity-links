@@ -184,6 +184,21 @@ node .\codex-tweak\scripts\send-open.js `
 
 A successful response contains `"ok":true` and `"code":"opened"`.
 
+## Release Process
+
+Before starting a release, update and commit the same stable version in `codex-tweak/manifest.json`,
+`codex-tweak/package.json`, and `unity-package/package.json`.
+
+1. Make sure that version commit is on `master`.
+2. Open the repository's GitHub Actions page and run the `Release` workflow from `master`.
+3. Enter the version without a leading `v`, such as `0.1.0`.
+4. Wait for all validation and tests to pass and for the workflow to create the Draft Release.
+5. Review the generated notes, then manually publish the Draft Release when it is ready.
+
+Never move or reuse a release tag. If a workflow retry finds the requested tag at the same commit, it may reuse that
+tag; a tag pointing elsewhere is an error. Codex++ update checks are advisory and only see published Releases, so a
+Draft Release does not notify users of an update.
+
 ## Safety Boundaries and Exit Codes
 
 The Codex maintenance scripts never terminate, launch, or automatically control Codex, and they never modify
@@ -196,3 +211,7 @@ maintenance scripts do not use `debug`.
   target state.
 - `2`: a safety block requires you to close Codex manually as instructed, or to resolve an unsafe directory or missing
   command before retrying.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

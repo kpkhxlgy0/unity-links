@@ -1,6 +1,8 @@
 {
   "name": "com.kpk.codex-unity-link",
   "version": "0.1.0",
+  "license": "MIT",
+  "licensesUrl": "https://github.com/kpkhxlgy0/unity-links/blob/master/LICENSE",
   "displayName": "KPK Codex Unity Link",
   "description": "Opens Codex Desktop links under Assets, ProjectSettings, or Packages in the matching Unity Editor.",
   "unity": "2022.3",

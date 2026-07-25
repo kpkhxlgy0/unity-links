@@ -34,6 +34,9 @@ Test-Case "maintainer checks stay project-neutral and avoid temporary Unity proj
     $files = @(
         (Join-Path $repositoryRoot "codex-tweak/test/index.test.js"),
         (Join-Path $repositoryRoot "scripts/tests/UnityLinkMaintenance.Tests.ps1"),
+        (Join-Path $repositoryRoot ".github/workflows/release.yml"),
+        (Join-Path $repositoryRoot "scripts/release/validate-release.mjs"),
+        (Join-Path $repositoryRoot "scripts/release/validate-release.test.mjs"),
         (Join-Path $repositoryRoot "scripts/tests/UninjectCheckOnly.Integration.ps1"),
         (Join-Path $repositoryRoot "docs/design.md"),
         (Join-Path $repositoryRoot "README.md"),
@@ -119,6 +122,61 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     foreach ($text in $requiredChineseText) { Assert-True ($chineseReadme.Contains($text)) "Chinese README is missing: $text" }
     Assert-True (!$englishReadme.Contains($legacyLayout))
     Assert-True (!$chineseReadme.Contains($legacyLayout))
+}
+
+Test-Case "MIT license and bilingual release documentation are complete" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $license = Get-Content -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Raw
+    $tweakPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "codex-tweak/package.json") -Raw |
+        ConvertFrom-Json
+    $unityPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "unity-package/package.json") -Raw |
+        ConvertFrom-Json
+    $englishReadme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.md") -Raw
+    $chineseReadme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.zh-CN.md") -Raw
+
+    Assert-True ($license.Contains("MIT License"))
+    Assert-True ($license.Contains("Copyright (c) 2026 KPK"))
+    Assert-Equal "MIT" $tweakPackage.license
+    Assert-Equal "MIT" $unityPackage.license
+    Assert-Equal "https://github.com/kpkhxlgy0/unity-links/blob/master/LICENSE" $unityPackage.licensesUrl
+
+    $requiredEnglish = @("## Release Process", "Actions", "Draft Release", "## License", "[MIT License](LICENSE)")
+    $requiredChinese = @("## 发布流程", "Actions", "Draft Release", "## 开源协议", "[MIT License](LICENSE)")
+    foreach ($text in $requiredEnglish)
+    {
+        Assert-True ($englishReadme.Contains($text)) "English README is missing: $text"
+    }
+    foreach ($text in $requiredChinese)
+    {
+        Assert-True ($chineseReadme.Contains($text)) "Chinese README is missing: $text"
+    }
+}
+
+Test-Case "release workflow is manual guarded and draft-only" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $workflow = Get-Content -LiteralPath (Join-Path $repositoryRoot ".github/workflows/release.yml") -Raw
+    $required = @(
+        "workflow_dispatch:",
+        "contents: write",
+        "windows-latest",
+        "refs/heads/master",
+        "scripts/release/validate-release.mjs",
+        "scripts/tests/Run-Tests.ps1",
+        "codex-tweak/test/index.test.js",
+        "scripts/release/validate-release.test.mjs",
+        "f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7",
+        "npm run build --workspace codex-plusplus",
+        "gh release create",
+        "--verify-tag",
+        "--draft",
+        "--generate-notes")
+    foreach ($text in $required)
+    {
+        Assert-True ($workflow.Contains($text)) "Release workflow is missing: $text"
+    }
+    Assert-True (!$workflow.Contains("--draft=false"))
+    Assert-True (!$workflow.Contains("git fetch --force"))
+    Assert-True (!$workflow.Contains("pull_request:"))
 }
 
 Test-Case "finds the nearest matching ancestor without filesystem fixtures" {

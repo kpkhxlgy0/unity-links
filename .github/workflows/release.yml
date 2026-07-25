@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version without the v prefix
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out unity-links
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Require master
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}" -ne "refs/heads/master") {
+            throw "Release workflow must run from master."
+          }
+
+      - name: Validate release metadata
+        shell: pwsh
+        run: node ./scripts/release/validate-release.mjs $env:GITHUB_WORKSPACE $env:RELEASE_VERSION
+
+      - name: Run PowerShell tests
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/tests/Run-Tests.ps1
+
+      - name: Run Codex tweak tests
+        shell: pwsh
+        run: node --test ./codex-tweak/test/index.test.js
+
+      - name: Run release validator tests
+        shell: pwsh
+        run: node --test ./scripts/release/validate-release.test.mjs
+
+      - name: Check diff formatting
+        shell: pwsh
+        run: git diff --check
+
+      - name: Check out pinned Codex++
+        uses: actions/checkout@v4
+        with:
+          repository: b-nnett/codex-plusplus
+          ref: f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7
+          path: .release-tools/codex-plusplus
+          persist-credentials: false
+
+      - name: Build Codex++ validator
+        shell: pwsh
+        working-directory: .release-tools/codex-plusplus
+        run: |
+          npm ci --ignore-scripts
+          npm run build --workspace @codex-plusplus/sdk
+          npm run build --workspace codex-plusplus
+
+      - name: Validate tweak with Codex++
+        shell: pwsh
+        run: |
+          node .\.release-tools\codex-plusplus\packages\installer\dist\cli.js `
+            validate-tweak (Resolve-Path .\codex-tweak).Path
+
+      - name: Create or reuse release tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = "v$env:RELEASE_VERSION"
+          git fetch --tags origin
+          $existing = git tag --list $tag
+          if ($existing)
+          {
+              $target = (git rev-list -n 1 $tag).Trim()
+              if ($target -ne $env:GITHUB_SHA)
+              {
+                  throw "Tag $tag points to $target instead of $env:GITHUB_SHA."
+              }
+          }
+          else
+          {
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a $tag $env:GITHUB_SHA -m "Unity Links $tag"
+              git push origin "refs/tags/$tag"
+          }
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+
+      - name: Create Draft Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $existingRelease = gh release list `
+              --repo $env:GITHUB_REPOSITORY `
+              --limit 100 `
+              --json tagName,url `
+              --jq ".[] | select(.tagName == `"$env:RELEASE_TAG`") | .url"
+          if ($existingRelease)
+          {
+              throw "Release already exists: $existingRelease"
+          }
+
+          $releaseUrl = gh release create $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --verify-tag `
+              --draft `
+              --title "Unity Links $env:RELEASE_TAG" `
+              --notes "Licensed under the MIT License. Review README.md and README.zh-CN.md for installation instructions." `
+              --generate-notes
+          "Draft Release: $releaseUrl" >> $env:GITHUB_STEP_SUMMARY
