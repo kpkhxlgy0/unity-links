@@ -75,7 +75,7 @@ Codex++ 商店用户只安装 `unity-links-codex`；Unity Package Manager 用户
 当前稳定版带标签的 Git URL 为：
 
 ```text
-https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.1
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.2
 ```
 
 需要协调式 Windows 安装、本地 `file:` 依赖、集成测试，或针对固定组件组合开发时，再使用本总入口仓库。
@@ -210,11 +210,11 @@ node .\codex-tweak\scripts\send-open.js `
 组件和总入口初期使用相同稳定版本。每个 workflow 都从对应仓库的 GitHub Actions 页面运行。从 `0.2.0`
 开始：
 
-1. 验证并发布 `unity-links-unity` 的 `v0.2.1`。
-2. 验证并发布 `unity-links-codex` 的 `v0.2.1`。
+1. 验证并发布 `unity-links-unity` 的 `v0.2.2`。
+2. 验证并发布 `unity-links-codex` 的 `v0.2.2`。
 3. 将本仓库的两个 submodule 指针更新到上述已发布 commit。
 4. 运行总入口集成测试和三类 Unity 链接 smoke check。
-5. 从 `master` 运行本仓库的 `Release` workflow，输入 `0.2.1`。
+5. 从 `master` 运行本仓库的 `Release` workflow，输入 `0.2.2`。
 6. 检查并手动发布生成的总入口 Draft Release。
 7. 使用已发布的 Codex 组件 commit 提交 Codex++ Tweak Store 审核。
 
