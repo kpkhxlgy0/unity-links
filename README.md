@@ -79,10 +79,10 @@ missing; they never fetch or modify Git state automatically.
 ### Direct Component Installation
 
 Codex++ Store users install only `unity-links-codex`. Unity Package Manager users install only
-`unity-links-unity`; after `v0.2.0` is published, its tagged Git URL is:
+`unity-links-unity`; the current stable tagged Git URL is:
 
 ```text
-https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.0
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.1
 ```
 
 Use this umbrella checkout when you need the coordinated Windows installer, local `file:` dependency, integration
@@ -220,11 +220,11 @@ A successful response contains `"ok":true` and `"code":"opened"`.
 The components and umbrella initially use the same stable version. Run each named workflow from its repository's
 GitHub Actions page. For `0.2.0` and later:
 
-1. Validate and publish `unity-links-unity` at `v0.2.0`.
-2. Validate and publish `unity-links-codex` at `v0.2.0`.
+1. Validate and publish `unity-links-unity` at `v0.2.1`.
+2. Validate and publish `unity-links-codex` at `v0.2.1`.
 3. Update this repository's two submodule pointers to those released commits.
 4. Run the umbrella integration tests and the three Unity link smoke checks.
-5. Run this repository's `Release` workflow from `master` with `0.2.0`.
+5. Run this repository's `Release` workflow from `master` with `0.2.1`.
 6. Review and manually publish the generated umbrella Draft Release.
 7. Submit the released Codex component commit for Codex++ Tweak Store review.
 
