@@ -391,7 +391,7 @@ function Get-CodexPackageLaunchLayout
 function Get-CodexExecutablePathsFromProcesses
 {
     [CmdletBinding()]
-    param([Parameter(Mandatory)] [object[]] $Processes)
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Processes)
 
     return @(
         $Processes |

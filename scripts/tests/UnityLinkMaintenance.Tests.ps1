@@ -901,4 +901,9 @@ Test-Case "recognizes the new ChatGPT desktop executable name" {
     Assert-True ($paths -contains "C:\mirror\app\resources\codex.exe")
 }
 
+Test-Case "returns no executable paths when the process query is empty" {
+    $paths = @(Get-CodexExecutablePathsFromProcesses -Processes @())
+    Assert-Equal 0 $paths.Count
+}
+
 Complete-Tests
