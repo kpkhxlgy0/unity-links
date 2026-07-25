@@ -85,6 +85,9 @@ function Remove-VerifiedTree
 $workRoot = $null
 try
 {
+    $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $PSScriptRoot
+    Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
+
     if (!$env:USERPROFILE) { throw "USERPROFILE is not available." }
     if (!$env:LOCALAPPDATA) { throw "LOCALAPPDATA is not available." }
 

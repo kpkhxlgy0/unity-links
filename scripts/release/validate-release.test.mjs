@@ -19,10 +19,23 @@ function fixtureRoot() {
   writeFileSync(join(root, "LICENSE"), "MIT License\n\nCopyright (c) 2026 KPK\n");
   writeJson(root, "codex-tweak/manifest.json", {
     version: "0.1.0",
-    githubRepo: "kpkhxlgy0/unity-links",
+    githubRepo: "kpkhxlgy0/unity-links-codex",
   });
   writeJson(root, "codex-tweak/package.json", { version: "0.1.0", license: "MIT" });
-  writeJson(root, "unity-package/package.json", { version: "0.1.0", license: "MIT" });
+  writeJson(root, "unity-package/package.json", {
+    version: "0.1.0",
+    license: "MIT",
+    licensesUrl: "https://github.com/kpkhxlgy0/unity-links-unity/blob/master/LICENSE",
+  });
+  writeFileSync(
+    join(root, ".gitmodules"),
+    '[submodule "codex-tweak"]\n' +
+      "\tpath = codex-tweak\n" +
+      "\turl = git@github.com:kpkhxlgy0/unity-links-codex.git\n" +
+      '[submodule "unity-package"]\n' +
+      "\tpath = unity-package\n" +
+      "\turl = git@github.com:kpkhxlgy0/unity-links-unity.git\n",
+  );
   return root;
 }
 
@@ -64,7 +77,23 @@ test("rejects every package version mismatch", () => {
 test("rejects a mismatched GitHub repository", () => {
   const root = fixtureRoot();
   updateJson(root, "codex-tweak/manifest.json", { githubRepo: "example/unity-links" });
-  assert.throws(() => validateRelease(root, "0.1.0"), /kpkhxlgy0\/unity-links/);
+  assert.throws(() => validateRelease(root, "0.1.0"), /kpkhxlgy0\/unity-links-codex/);
+});
+
+test("rejects incorrect component repository metadata", () => {
+  const wrongLicenseUrl = fixtureRoot();
+  updateJson(wrongLicenseUrl, "unity-package/package.json", {
+    licensesUrl: "https://github.com/kpkhxlgy0/unity-links/blob/master/LICENSE",
+  });
+  assert.throws(() => validateRelease(wrongLicenseUrl, "0.1.0"), /unity-links-unity/);
+
+  const missingGitmodules = fixtureRoot();
+  rmSync(join(missingGitmodules, ".gitmodules"));
+  assert.throws(() => validateRelease(missingGitmodules, "0.1.0"), /\.gitmodules/);
+
+  const wrongGitmodules = fixtureRoot();
+  writeFileSync(join(wrongGitmodules, ".gitmodules"), '[submodule "wrong"]\n\tpath = wrong\n');
+  assert.throws(() => validateRelease(wrongGitmodules, "0.1.0"), /unity-links-codex\.git/);
 });
 
 test("rejects missing or incorrect MIT metadata", () => {

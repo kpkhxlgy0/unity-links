@@ -23,6 +23,45 @@ Test-Case "repository layout follows its supplied root" {
     Assert-Equal (Join-Path $root "unity-package") $layout.PackageRoot
 }
 
+Test-Case "accepts initialized component manifests" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        New-Item -ItemType Directory -Path (Join-Path $root "codex-tweak"),
+            (Join-Path $root "unity-package") -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $root "codex-tweak/manifest.json"), "{}")
+        [System.IO.File]::WriteAllText((Join-Path $root "unity-package/package.json"), "{}")
+        $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $root
+        Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
+        Assert-UnityLinkComponentInitialized -Layout $layout -Component UnityPackage
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "reports the exact command for an uninitialized component" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $root
+        $commandPattern = [regex]::Escape(
+            "git -C `"$root`" submodule update --init --recursive")
+        Assert-Throws {
+            Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
+        } $commandPattern
+        Assert-Throws {
+            Assert-UnityLinkComponentInitialized -Layout $layout -Component UnityPackage
+        } $commandPattern
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Test-Case "Unity receiver dispatches AnimationClip assets without changing generic fallbacks" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $receiverPath = Join-Path $repositoryRoot "unity-package/Editor/UnityAssetLinkReceiver.cs"
@@ -139,6 +178,8 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
 Test-Case "MIT license and bilingual release documentation are complete" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $license = Get-Content -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Raw
+    $tweakManifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "codex-tweak/manifest.json") -Raw |
+        ConvertFrom-Json
     $tweakPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "codex-tweak/package.json") -Raw |
         ConvertFrom-Json
     $unityPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "unity-package/package.json") -Raw |
@@ -150,7 +191,12 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     Assert-True ($license.Contains("Copyright (c) 2026 KPK"))
     Assert-Equal "MIT" $tweakPackage.license
     Assert-Equal "MIT" $unityPackage.license
-    Assert-Equal "https://github.com/kpkhxlgy0/unity-links/blob/master/LICENSE" $unityPackage.licensesUrl
+    Assert-Equal "kpkhxlgy0/unity-links-codex" $tweakManifest.githubRepo
+    Assert-Equal "0.2.0" $tweakManifest.version
+    Assert-Equal "0.2.0" $tweakPackage.version
+    Assert-Equal "0.2.0" $unityPackage.version
+    Assert-Equal "https://github.com/kpkhxlgy0/unity-links-unity/blob/master/LICENSE" `
+        $unityPackage.licensesUrl
 
     $requiredEnglish = @("## Release Process", "Actions", "Draft Release", "## License", "[MIT License](LICENSE)")
     $requiredChinese = @("## 发布流程", "Actions", "Draft Release", "## 开源协议", "[MIT License](LICENSE)")
@@ -164,6 +210,22 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     }
 }
 
+Test-Case "pins both component repositories with SSH submodule URLs" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $gitmodules = Get-Content -LiteralPath (Join-Path $repositoryRoot ".gitmodules") -Raw
+    $required = @(
+        '[submodule "codex-tweak"]',
+        "path = codex-tweak",
+        "url = git@github.com:kpkhxlgy0/unity-links-codex.git",
+        '[submodule "unity-package"]',
+        "path = unity-package",
+        "url = git@github.com:kpkhxlgy0/unity-links-unity.git")
+    foreach ($text in $required)
+    {
+        Assert-True ($gitmodules.Contains($text)) ".gitmodules is missing: $text"
+    }
+}
+
 Test-Case "release workflow is manual guarded and draft-only" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $workflow = Get-Content -LiteralPath (Join-Path $repositoryRoot ".github/workflows/release.yml") -Raw
@@ -172,6 +234,7 @@ Test-Case "release workflow is manual guarded and draft-only" {
         "contents: write",
         "windows-latest",
         "actions/checkout@v6",
+        "submodules: recursive",
         "actions/setup-node@v6",
         'node-version: "24"',
         "package-manager-cache: false",
@@ -180,6 +243,8 @@ Test-Case "release workflow is manual guarded and draft-only" {
         "scripts/release/validate-release.mjs",
         "scripts/tests/Run-Tests.ps1",
         "codex-tweak/test/index.test.js",
+        'foreach ($component in @("codex-tweak", "unity-package"))',
+        'git -C $component fetch --tags origin',
         "scripts/release/validate-release.test.mjs",
         "f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7",
         "npm run build --workspace codex-plusplus",

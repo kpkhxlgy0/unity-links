@@ -1,9 +1,0 @@
-{
-  "name": "kpk-codex-unity-asset-links",
-  "version": "0.1.0",
-  "license": "MIT",
-  "private": true,
-  "scripts": {
-    "test": "node --test test/*.test.js"
-  }
-}

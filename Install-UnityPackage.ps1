@@ -11,6 +11,7 @@ Import-Module (Join-Path $PSScriptRoot "scripts/UnityLinkMaintenance.psm1") -For
 try
 {
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $PSScriptRoot
+    Assert-UnityLinkComponentInitialized -Layout $layout -Component UnityPackage
     if (!(Test-Path -LiteralPath $layout.PackageManifest -PathType Leaf))
     {
         throw "Unity package manifest not found: $($layout.PackageManifest)"

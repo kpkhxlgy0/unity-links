@@ -78,11 +78,14 @@ function Get-LiveMaintenanceContext
 
 try
 {
+    $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $PSScriptRoot
+    Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
+
     if (!$env:APPDATA) { throw "APPDATA is not available." }
     if (!$env:LOCALAPPDATA) { throw "LOCALAPPDATA is not available." }
 
-    $expectedTweakPath = Join-Path $PSScriptRoot "codex-tweak"
-    $tweakManifestPath = Join-Path $expectedTweakPath "manifest.json"
+    $expectedTweakPath = $layout.TweakRoot
+    $tweakManifestPath = $layout.TweakManifest
     if (!(Test-Path -LiteralPath $tweakManifestPath -PathType Leaf))
     {
         throw "Tweak manifest not found: $tweakManifestPath"

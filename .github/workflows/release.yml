@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -81,6 +82,28 @@ jobs:
         run: |
           node .\.release-tools\codex-plusplus\packages\installer\dist\cli.js `
             validate-tweak (Resolve-Path .\codex-tweak).Path
+
+      - name: Verify component release tags
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = "v$env:RELEASE_VERSION"
+          foreach ($component in @("codex-tweak", "unity-package"))
+          {
+              git -C $component fetch --tags origin
+              $existing = git -C $component tag --list $tag
+              if (!$existing)
+              {
+                  throw "$component does not have $tag."
+              }
+              $head = (git -C $component rev-parse HEAD).Trim()
+              $tagCommit = (git -C $component rev-list -n 1 $tag).Trim()
+              if ($head -ne $tagCommit)
+              {
+                  throw "$component is pinned at $head instead of $tagCommit for $tag."
+              }
+          }
 
       - name: Create or reuse release tag
         shell: pwsh

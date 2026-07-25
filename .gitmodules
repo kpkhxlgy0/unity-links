@@ -1,0 +1,6 @@
+[submodule "codex-tweak"]
+	path = codex-tweak
+	url = git@github.com:kpkhxlgy0/unity-links-codex.git
+[submodule "unity-package"]
+	path = unity-package
+	url = git@github.com:kpkhxlgy0/unity-links-unity.git

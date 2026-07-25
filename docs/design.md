@@ -40,24 +40,25 @@ was selected over a polled file queue because it provides immediate responses an
 ## Source Layout
 
 ```text
-<unity-links-repository>\
+<unity-links-umbrella>\
   README.md
   docs\
     design.md
-  codex-tweak\
-    manifest.json
-    index.js
-    test\
-  unity-package\
-    package.json
-    Editor\
-      KPK.CodexUnityLink.Editor.asmdef
-      UnityAssetLinkReceiver.cs
+  codex-tweak\       Git submodule -> kpkhxlgy0/unity-links-codex
+  unity-package\     Git submodule -> kpkhxlgy0/unity-links-unity
 ```
 
-The source directory is its own Git repository. The Unity project consumes `unity-package` through a local `file:`
-dependency. The Codex++ live tweaks directory contains a development link to `codex-tweak`; it is not the source of
-truth.
+`kpkhxlgy0/unity-links-codex` is authoritative for the Codex++ tweak, manifest, store icon, unit tests, and component
+release. `kpkhxlgy0/unity-links-unity` is authoritative for the Editor receiver, UPM metadata, and component release.
+The umbrella repository owns the shared protocol description, Windows maintenance scripts, integration tests, and the
+exact compatible pair through pinned Git submodule commits.
+Both gitlinks use GitHub SSH URLs (`git@github.com:kpkhxlgy0/unity-links-codex.git` and
+`git@github.com:kpkhxlgy0/unity-links-unity.git`) so maintainers use the same authenticated transport for fetch and
+push.
+
+The Unity project can consume `unity-package` through the umbrella's local `file:` path or directly from a tagged
+component Git URL. The Codex++ live tweaks directory contains a development link to `codex-tweak`; it is not the source
+of truth. Existing local paths remain stable after the split because the two component directory names do not change.
 
 ## Components
 
@@ -194,10 +195,11 @@ so a digest collision or incorrectly routed request cannot cross projects.
 
 ## Tweak Metadata
 
-The tweak uses id `com.kpk.unity-asset-links`, version `0.1.0`, `minRuntime: "1.0.0"`, and `scope: "both"`. Its exact
-permission list is `["ipc", "filesystem"]`; version 0.1.0 does not add a settings page. Codex++ 1.0.0 requires a
-syntactically valid `githubRepo` even for a local development tweak, so the local-only manifest uses
-`kpkhxlgy0/unity-links`. A failed advisory release lookup must not affect loading or link handling.
+The original tweak uses id `com.kpk.unity-asset-links`, version `0.1.0`, `minRuntime: "1.0.0"`, and `scope: "both"`.
+Its exact permission list is `["ipc", "filesystem"]`; version 0.1.0 does not add a settings page. Codex++ 1.0.0
+requires a syntactically valid `githubRepo` even for a local development tweak, so version 0.1.0 uses
+`kpkhxlgy0/unity-links`. Starting with the split `0.2.0` component, `githubRepo` is
+`kpkhxlgy0/unity-links-codex`. A failed advisory release lookup must not affect loading or link handling.
 
 ## Verification
 

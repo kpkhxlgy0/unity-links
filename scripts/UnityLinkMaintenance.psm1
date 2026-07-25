@@ -47,6 +47,26 @@ function Get-UnityLinkRepositoryLayout
     }
 }
 
+function Assert-UnityLinkComponentInitialized
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object] $Layout,
+        [Parameter(Mandatory)]
+        [ValidateSet("CodexTweak", "UnityPackage")]
+        [string] $Component)
+
+    $manifest = if ($Component -eq "CodexTweak") {
+        $Layout.TweakManifest
+    } else {
+        $Layout.PackageManifest
+    }
+    if (Test-Path -LiteralPath $manifest -PathType Leaf) { return }
+
+    $command = "git -C `"$($Layout.RepositoryRoot)`" submodule update --init --recursive"
+    throw "$Component is not initialized. Run: $command"
+}
+
 function Test-UnityProjectRoot
 {
     [CmdletBinding()]
@@ -874,6 +894,7 @@ Export-ModuleMember -Function @(
     "Resolve-NormalizedPath",
     "Test-PathEqual",
     "Get-UnityLinkRepositoryLayout",
+    "Assert-UnityLinkComponentInitialized",
     "Test-UnityProjectRoot",
     "Find-UnityProjectRoot",
     "Get-UnityPackageManifestValue",

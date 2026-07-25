@@ -20,8 +20,13 @@ Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 
 ## 放置仓库
 
-这个仓库既是 Codex++ tweak 的长期源目录，也是 Unity Package Manager `file:` 依赖的长期源目录。安装成功后必须
-保留它；不要把它当作可以删除的临时安装包。
+这个仓库是集成和安装总入口。它通过 Git submodule，将独立发布的
+[Codex++ tweak](https://github.com/kpkhxlgy0/unity-links-codex) 固定在 `codex-tweak/`，将
+[Unity package](https://github.com/kpkhxlgy0/unity-links-unity) 固定在 `unity-package/`。本地安装成功后仍需
+保留这个 checkout；不要把它当作可以删除的临时安装包。
+
+组件 submodule 使用 GitHub SSH 地址。使用 `--recurse-submodules` 克隆或初始化已有 checkout 前，请先配置可用的
+GitHub SSH key。
 
 ### 放在一个 Unity 项目内
 
@@ -30,7 +35,9 @@ Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 ```powershell
 $unityProject = "D:\Projects\ExampleUnityProject"
 New-Item -ItemType Directory -Path (Join-Path $unityProject "Tools") -Force | Out-Null
-git clone https://github.com/kpkhxlgy0/unity-links.git (Join-Path $unityProject "Tools/unity-links")
+git clone --recurse-submodules `
+    https://github.com/kpkhxlgy0/unity-links.git `
+    (Join-Path $unityProject "Tools/unity-links")
 Set-Location (Join-Path $unityProject "Tools/unity-links")
 ```
 
@@ -43,12 +50,35 @@ Set-Location (Join-Path $unityProject "Tools/unity-links")
 
 ```powershell
 New-Item -ItemType Directory -Path D:\Tools -Force | Out-Null
-git clone https://github.com/kpkhxlgy0/unity-links.git D:\Tools\unity-links
+git clone --recurse-submodules https://github.com/kpkhxlgy0/unity-links.git D:\Tools\unity-links
 Set-Location D:\Tools\unity-links
 pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\Projects\ExampleUnityProject
 ```
 
 Codex++ 只需按 Windows 用户全局安装和注入一次；Unity package 必须对每个需要链接功能的 Unity 项目分别安装。
+
+### 已有仓库
+
+拉取拆仓改动后，先初始化固定的组件，再运行安装脚本：
+
+```powershell
+git pull --ff-only
+git submodule update --init --recursive
+```
+
+路径仍为 `codex-tweak/` 和 `unity-package/`，因此完成 submodule 初始化后，已有 Codex++ junction 和 Unity
+`file:` 依赖仍然有效。组件缺失时，维护脚本会打印准确的初始化命令，但不会自动获取或修改 Git 状态。
+
+### 直接安装组件
+
+Codex++ 商店用户只安装 `unity-links-codex`；Unity Package Manager 用户只安装 `unity-links-unity`。
+`v0.2.0` 发布后，带标签的 Git URL 为：
+
+```text
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.0
+```
+
+需要协调式 Windows 安装、本地 `file:` 依赖、集成测试，或针对固定组件组合开发时，再使用本总入口仓库。
 
 ## 首次安装
 
@@ -162,17 +192,20 @@ node .\codex-tweak\scripts\send-open.js `
 
 ## 发布流程
 
-开始发布前，先在 `codex-tweak/manifest.json`、`codex-tweak/package.json` 和
-`unity-package/package.json` 中更新并提交同一个稳定版本号。
+组件和总入口初期使用相同稳定版本。每个 workflow 都从对应仓库的 GitHub Actions 页面运行。从 `0.2.0`
+开始：
 
-1. 确认该版本提交已经位于 `master`。
-2. 打开仓库的 GitHub Actions 页面，从 `master` 运行 `Release` 工作流。
-3. 输入不带前导 `v` 的版本号，例如 `0.1.0`。
-4. 等待全部校验和测试通过，并由工作流创建 Draft Release。
-5. 检查自动生成的发布说明，准备完成后再手动发布该 Draft Release。
+1. 验证并发布 `unity-links-unity` 的 `v0.2.0`。
+2. 验证并发布 `unity-links-codex` 的 `v0.2.0`。
+3. 将本仓库的两个 submodule 指针更新到上述已发布 commit。
+4. 运行总入口集成测试和三类 Unity 链接 smoke check。
+5. 从 `master` 运行本仓库的 `Release` workflow，输入 `0.2.0`。
+6. 检查并手动发布生成的总入口 Draft Release。
+7. 使用已发布的 Codex 组件 commit 提交 Codex++ Tweak Store 审核。
 
 不要移动或复用发布标签。工作流重试时，如果所需标签已指向同一提交，可以继续使用；标签指向其他提交时会失败。
-Codex++ 的更新检查只提供提示，并且只能看到已经发布的 Releases，因此 Draft Release 不会向用户提示更新。
+总入口 workflow 还要求两个 submodule 都指向匹配的组件标签。Codex++ 的更新检查只提供提示，并且只能看到
+已经发布的 Releases，因此 Draft Release 不会向用户提示更新。
 
 ## 安全边界与退出码
 

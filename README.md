@@ -22,9 +22,13 @@ depend on a fixed drive letter or project name.
 
 ## Repository Location
 
-This repository is both the long-term source directory for the Codex++ tweak and the long-term source directory for
-the Unity Package Manager `file:` dependency. Keep it after installation; do not treat it as a temporary installer
-that can be deleted.
+This repository is the integration and installation entry point. It pins the independently published
+[Codex++ tweak](https://github.com/kpkhxlgy0/unity-links-codex) at `codex-tweak/` and
+[Unity package](https://github.com/kpkhxlgy0/unity-links-unity) at `unity-package/` through Git submodules. Keep the
+checkout after local installation; do not treat it as a temporary installer that can be deleted.
+
+The component submodules use GitHub SSH URLs. Configure a working GitHub SSH key before cloning with
+`--recurse-submodules` or initializing an existing checkout.
 
 ### Inside a Unity Project
 
@@ -34,7 +38,9 @@ Place the repository below the Unity project root but outside `Assets`:
 ```powershell
 $unityProject = "D:\Projects\ExampleUnityProject"
 New-Item -ItemType Directory -Path (Join-Path $unityProject "Tools") -Force | Out-Null
-git clone https://github.com/kpkhxlgy0/unity-links.git (Join-Path $unityProject "Tools/unity-links")
+git clone --recurse-submodules `
+    https://github.com/kpkhxlgy0/unity-links.git `
+    (Join-Path $unityProject "Tools/unity-links")
 Set-Location (Join-Path $unityProject "Tools/unity-links")
 ```
 
@@ -49,13 +55,38 @@ explicitly:
 
 ```powershell
 New-Item -ItemType Directory -Path D:\Tools -Force | Out-Null
-git clone https://github.com/kpkhxlgy0/unity-links.git D:\Tools\unity-links
+git clone --recurse-submodules https://github.com/kpkhxlgy0/unity-links.git D:\Tools\unity-links
 Set-Location D:\Tools\unity-links
 pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\Projects\ExampleUnityProject
 ```
 
 Codex++ only needs to be installed and injected once per Windows user. Install the Unity package separately in every
 Unity project that needs link handling.
+
+### Existing Clones
+
+After pulling the repository split, initialize the pinned components before running any installer:
+
+```powershell
+git pull --ff-only
+git submodule update --init --recursive
+```
+
+The paths remain `codex-tweak/` and `unity-package/`, so existing Codex++ junctions and Unity `file:` dependencies stay
+valid after submodule initialization. Maintenance scripts report the exact initialization command when a component is
+missing; they never fetch or modify Git state automatically.
+
+### Direct Component Installation
+
+Codex++ Store users install only `unity-links-codex`. Unity Package Manager users install only
+`unity-links-unity`; after `v0.2.0` is published, its tagged Git URL is:
+
+```text
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.0
+```
+
+Use this umbrella checkout when you need the coordinated Windows installer, local `file:` dependency, integration
+tests, or development against the exact component pair.
 
 ## First-Time Setup
 
@@ -186,18 +217,21 @@ A successful response contains `"ok":true` and `"code":"opened"`.
 
 ## Release Process
 
-Before starting a release, update and commit the same stable version in `codex-tweak/manifest.json`,
-`codex-tweak/package.json`, and `unity-package/package.json`.
+The components and umbrella initially use the same stable version. Run each named workflow from its repository's
+GitHub Actions page. For `0.2.0` and later:
 
-1. Make sure that version commit is on `master`.
-2. Open the repository's GitHub Actions page and run the `Release` workflow from `master`.
-3. Enter the version without a leading `v`, such as `0.1.0`.
-4. Wait for all validation and tests to pass and for the workflow to create the Draft Release.
-5. Review the generated notes, then manually publish the Draft Release when it is ready.
+1. Validate and publish `unity-links-unity` at `v0.2.0`.
+2. Validate and publish `unity-links-codex` at `v0.2.0`.
+3. Update this repository's two submodule pointers to those released commits.
+4. Run the umbrella integration tests and the three Unity link smoke checks.
+5. Run this repository's `Release` workflow from `master` with `0.2.0`.
+6. Review and manually publish the generated umbrella Draft Release.
+7. Submit the released Codex component commit for Codex++ Tweak Store review.
 
 Never move or reuse a release tag. If a workflow retry finds the requested tag at the same commit, it may reuse that
-tag; a tag pointing elsewhere is an error. Codex++ update checks are advisory and only see published Releases, so a
-Draft Release does not notify users of an update.
+tag; a tag pointing elsewhere is an error. The umbrella workflow requires both submodules to point to the matching
+component tag. Codex++ update checks are advisory and only see published Releases, so a Draft Release does not notify
+users of an update.
 
 ## Safety Boundaries and Exit Codes
 
