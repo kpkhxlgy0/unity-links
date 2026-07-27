@@ -90,8 +90,9 @@ tests, or development against the exact component pair.
 
 ## First-Time Setup
 
-Check the environment first, then install the pinned Codex++ 1.0.0 release. The normal installation script continues
-by injecting the current Codex Appx and maintaining the tweak link:
+Check the environment first, then install the pinned Codex++ 1.0.0 release. The installation script is also the
+routine-maintenance entry point: it injects or repairs the newest Codex Appx mirror, maintains launchers and the tweak
+junction, and removes the one previous mirror replaced by the run:
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
@@ -130,17 +131,30 @@ Codex++ mirror.
 
 ### After a Codex Desktop Update
 
-After every Codex Appx update, check the state and then perform the required maintenance:
+After every Codex Appx update, check the state and then run the same installation/maintenance entry point:
 
 ```powershell
-pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
-pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
+pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
-`Inject-CodexPlusPlus.ps1` automatically selects the highest installed Codex Appx version and maintains its separate
+`Install-CodexPlusPlus.ps1` automatically selects the highest installed Codex Appx version and maintains its separate
 Codex++ mirror, CMD shim, Start menu shortcut, and the
 `%APPDATA%\codex-plusplus\tweaks\com.kpk.unity-asset-links` junction. It reads the actual desktop entry point from
 `AppxManifest.xml`, so it remains compatible when an Appx contains both helper launchers and the desktop application.
+It records the mirror from `state.json` before maintenance and, after the new current mirror is fully verified,
+removes only that replaced previous mirror. Check mode prints the same cleanup plan without deleting anything.
+
+To remove every recognized old managed mirror instead of only the replaced previous mirror, pass the explicit option:
+
+```powershell
+pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly -CleanupAllOldVersions
+pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CleanupAllOldVersions
+```
+
+The all-old mode only considers recognized `OpenAI.Codex_*` directories directly below the managed `store-apps`
+root. Both modes exclude the verified current mirror and block deletion when process discovery fails or a target is
+running.
 
 State meanings:
 
@@ -150,8 +164,8 @@ State meanings:
   this state.
 - `LinkRequired`: injection is correct, but the tweak junction is missing or still points to an old repository
   location.
-- `Blocked`: a mirror that must be changed is running, or the live tweak path is a real directory that cannot be
-  replaced safely.
+- `Blocked`: a mirror that must be changed or removed is running, process discovery failed, or the live tweak path is
+  a real directory that cannot be replaced safely.
 
 ### Shared Codex++ Maintenance
 
@@ -160,14 +174,15 @@ script at a time; both projects coordinate through one shared lock. A safety blo
 
 - `MaintenanceBusy`: another Unity Links or Unreal Links maintenance script holds the shared lock.
 - `ProcessQueryFailed`: the script could not reliably determine whether Codex is running, so it performs no write.
-- `MirrorRunning`: an ASAR-changing install, repair, or uninject operation requires every Codex process to be closed.
+- `MirrorRunning`: an ASAR-changing install or repair requires every Codex process to be closed.
+- `OldMirrorRunning`: an old mirror selected for cleanup is still running and will not be deleted.
 - `UnsafeLink`: a live tweak path is a real directory and will not be replaced or removed automatically.
 
 Link and launcher maintenance remains available while a correctly patched Codex mirror is running, provided process
 discovery succeeded. Same-version ASAR drift is repaired directly against the managed mirror; a new, stale, missing,
 or incomplete mirror is rebuilt from the official Appx only after Codex is confirmed closed. The scripts never stop or
-restart Codex. Do not use raw `codexplusplus install`, `repair`, or `uninstall` commands for this shared setup; use the
-repository maintenance scripts so both engines observe the same safety checks.
+restart Codex. Do not use raw `codexplusplus install` or `repair` commands for this shared setup; use
+`Install-CodexPlusPlus.ps1` so both engines observe the same safety checks.
 
 ### Moving the Repository
 
@@ -180,18 +195,28 @@ automatically. Keep the old directory until all of these steps succeed:
 3. Open those projects and wait for Unity to resolve the package again. Delete the old directory only after confirming
    that everything works.
 
-### Uninjecting
+### Managing Only the Unity Links Tweak Junction
+
+`Inject-CodexPlusPlus.ps1` now creates or repairs only this repository's tweak junction. It does not inspect or repair
+the Codex Appx mirror or launchers, so it is also the lightweight command to run after moving the repository:
+
+```powershell
+pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
+```
+
+To remove only that junction:
 
 ```powershell
 pwsh -NoProfile -File .\Uninject-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Uninject-CodexPlusPlus.ps1
 ```
 
-Uninjection performs a non-purge uninstall against the exact app root recorded in `state.json`. It removes this
-tweak's junction only after the uninstall is confirmed. It does not remove the Codex++ source or command, other
-tweaks, this repository, or any Unity manifest.
+Neither junction command installs, repairs, or uninstalls Codex++, changes launchers, reads `state.json`, or deletes
+managed mirrors. A real directory at the live tweak path is blocked and never overwritten or removed. Restart Codex
+after changing the junction so the tweak is loaded or unloaded.
 
-Removing the Unity package is independent of uninjection. To remove the package, delete the
+Removing the Unity package is independent of removing the tweak junction. To remove the package, delete the
 `com.kpk.codex-unity-link` entry from the target project's manifest and let Unity resolve packages again.
 
 ## Unity Manifest Updates

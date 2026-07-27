@@ -743,6 +743,144 @@ function Test-PathInside
     return $candidate.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Resolve-CodexManagedPackagePath
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ManagedStoreRoot,
+        [Parameter(Mandatory)] [string] $CandidatePath,
+        [switch] $AppRoot)
+
+    $storeRoot = Resolve-NormalizedPath $ManagedStoreRoot
+    $candidate = Resolve-NormalizedPath $CandidatePath
+    $packageRoot = if ($AppRoot) {
+        if ((Split-Path $candidate -Leaf) -ne "app")
+        {
+            throw "Managed mirror app root must end in app: $candidate"
+        }
+        Split-Path $candidate -Parent
+    } else {
+        $candidate
+    }
+    if (!(Test-PathEqual (Split-Path $packageRoot -Parent) $storeRoot))
+    {
+        throw "Managed mirror package must be an immediate child of $storeRoot`: $packageRoot"
+    }
+    if ((Split-Path $packageRoot -Leaf) -notmatch '^OpenAI\.Codex_.+$')
+    {
+        throw "Unrecognized managed Codex package: $packageRoot"
+    }
+    return $packageRoot
+}
+
+function Get-CodexMirrorCleanupPlan
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ManagedStoreRoot,
+        [Parameter(Mandatory)] [string] $CurrentAppRoot,
+        [AllowEmptyString()] [string] $PreviousAppRoot = "",
+        [string[]] $CandidatePackageRoots = @(),
+        [switch] $CleanupAllOldVersions)
+
+    $currentPackage = Resolve-CodexManagedPackagePath `
+        -ManagedStoreRoot $ManagedStoreRoot `
+        -CandidatePath $CurrentAppRoot `
+        -AppRoot
+    $candidates = if ($CleanupAllOldVersions) {
+        @($CandidatePackageRoots)
+    } elseif ($PreviousAppRoot) {
+        @(Resolve-CodexManagedPackagePath `
+            -ManagedStoreRoot $ManagedStoreRoot `
+            -CandidatePath $PreviousAppRoot `
+            -AppRoot)
+    } else {
+        @()
+    }
+    $targets = @(
+        $candidates |
+            ForEach-Object {
+                $packageRoot = Resolve-CodexManagedPackagePath `
+                    -ManagedStoreRoot $ManagedStoreRoot `
+                    -CandidatePath $_
+                if (!(Test-PathEqual $packageRoot $currentPackage)) { $packageRoot }
+            } |
+            Sort-Object -Unique)
+
+    return [pscustomobject] @{
+        Mode = if ($CleanupAllOldVersions) { "AllOld" } else { "Previous" }
+        CurrentPackageRoot = $currentPackage
+        Targets = $targets
+    }
+}
+
+function Remove-CodexMirrorCleanupTargets
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $ManagedStoreRoot,
+        [Parameter(Mandatory)] [string] $CurrentAppRoot,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Targets,
+        [Parameter(Mandatory)] [object] $ProcessSnapshot)
+
+    if (!$ProcessSnapshot.Succeeded)
+    {
+        throw "Old-version cleanup blocked because process discovery failed: $($ProcessSnapshot.FailureReason)"
+    }
+
+    $currentPackage = Resolve-CodexManagedPackagePath `
+        -ManagedStoreRoot $ManagedStoreRoot `
+        -CandidatePath $CurrentAppRoot `
+        -AppRoot
+    $validated = @(
+        $Targets |
+            ForEach-Object {
+                $target = Resolve-CodexManagedPackagePath `
+                    -ManagedStoreRoot $ManagedStoreRoot `
+                    -CandidatePath $_
+                if (Test-PathEqual $target $currentPackage)
+                {
+                    throw "Refusing to delete the current managed Codex package: $target"
+                }
+                $running = @(
+                    $ProcessSnapshot.ExecutablePaths |
+                        Where-Object { $_ -and (Test-PathInside -Path $_ -Root $target) })
+                if ($running.Count -gt 0)
+                {
+                    throw "Old-version cleanup blocked because target is running: $target"
+                }
+
+                $item = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+                if ($null -ne $item)
+                {
+                    if (!$item.PSIsContainer)
+                    {
+                        throw "Cleanup target is not a directory: $target"
+                    }
+                    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+                    {
+                        throw "Cleanup target is a reparse point and will not be removed: $target"
+                    }
+                }
+                $target
+            } |
+            Sort-Object -Unique)
+
+    $removed = [System.Collections.Generic.List[string]]::new()
+    foreach ($target in $validated)
+    {
+        if (!(Test-Path -LiteralPath $target)) { continue }
+
+        Remove-Item -LiteralPath $target -Recurse -Force
+        if (Test-Path -LiteralPath $target)
+        {
+            throw "Cleanup target still exists after removal: $target"
+        }
+        $removed.Add($target)
+    }
+    return @($removed)
+}
+
 function Get-CodexMaintenanceState
 {
     [CmdletBinding()]
@@ -1288,6 +1426,8 @@ Export-ModuleMember -Function @(
     "Exit-CodexMaintenanceLock",
     "Get-CodexRepairPlan",
     "Test-PathInside",
+    "Get-CodexMirrorCleanupPlan",
+    "Remove-CodexMirrorCleanupTargets",
     "Get-CodexMaintenanceState",
     "Get-TweakLinkState",
     "Set-TweakJunction",

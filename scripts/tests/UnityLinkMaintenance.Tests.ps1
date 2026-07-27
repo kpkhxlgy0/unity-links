@@ -109,22 +109,6 @@ Test-Case "maintainer checks stay project-neutral and avoid temporary Unity proj
         "PowerShell tests must not assemble a temporary Unity project."
 }
 
-Test-Case "inject entry point uses Start Menu Known Folder without a desktop launcher requirement" {
-    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-    $injectText = Get-Content -LiteralPath (Join-Path $repositoryRoot "Inject-CodexPlusPlus.ps1") -Raw
-    $integrationText = Get-Content `
-        -LiteralPath (Join-Path $repositoryRoot "scripts/tests/InjectCheckOnly.Integration.ps1") -Raw
-    $legacyParameter = "Shortcut" + "Paths"
-    $profileDesktop = '$env:USER' + 'PROFILE "Desktop'
-
-    Assert-True ($injectText.Contains("[Environment+SpecialFolder]::Programs"))
-    Assert-True (!$injectText.Contains($legacyParameter))
-    Assert-True (!$injectText.Contains($profileDesktop))
-    Assert-True ($integrationText.Contains("[Environment+SpecialFolder]::Programs"))
-    Assert-True (!$integrationText.Contains($legacyParameter))
-    Assert-True (!$integrationText.Contains($profileDesktop))
-}
-
 Test-Case "Unity installer delegates transactional writes without version-control probing" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $installerText = Get-Content -LiteralPath (Join-Path $repositoryRoot "Install-UnityPackage.ps1") -Raw
@@ -476,6 +460,208 @@ Test-Case "derives official and version-specific mirror paths" {
     Assert-Equal (
         "C:\Users\Test\AppData\Local\codex-plusplus\store-apps\$($package.PackageFullName)\app"
     ) $layout.MirrorAppRoot
+}
+
+Test-Case "default cleanup selects only the previously recorded managed mirror" {
+    $store = "C:\Local\codex-plusplus\store-apps"
+    $current = "$store\OpenAI.Codex_2_x64__publisher\app"
+    $previous = "$store\OpenAI.Codex_1_x64__publisher\app"
+
+    $plan = Get-CodexMirrorCleanupPlan `
+        -ManagedStoreRoot $store `
+        -CurrentAppRoot $current `
+        -PreviousAppRoot $previous
+
+    Assert-Equal "Previous" $plan.Mode
+    Assert-Equal "$store\OpenAI.Codex_2_x64__publisher" $plan.CurrentPackageRoot
+    Assert-Equal 1 @($plan.Targets).Count
+    Assert-Equal "$store\OpenAI.Codex_1_x64__publisher" @($plan.Targets)[0]
+}
+
+Test-Case "default cleanup keeps the current recorded mirror" {
+    $store = "C:\Local\codex-plusplus\store-apps"
+    $current = "$store\OpenAI.Codex_2_x64__publisher\app"
+
+    $plan = Get-CodexMirrorCleanupPlan `
+        -ManagedStoreRoot $store `
+        -CurrentAppRoot $current `
+        -PreviousAppRoot $current
+
+    Assert-Equal "Previous" $plan.Mode
+    Assert-Equal 0 @($plan.Targets).Count
+}
+
+Test-Case "all-old cleanup selects recognized siblings except the current mirror" {
+    $store = "C:\Local\codex-plusplus\store-apps"
+    $current = "$store\OpenAI.Codex_2_x64__publisher\app"
+
+    $plan = Get-CodexMirrorCleanupPlan `
+        -ManagedStoreRoot $store `
+        -CurrentAppRoot $current `
+        -CandidatePackageRoots @(
+            "$store\OpenAI.Codex_0_x64__publisher",
+            "$store\OpenAI.Codex_1_x64__publisher",
+            "$store\OpenAI.Codex_2_x64__publisher") `
+        -CleanupAllOldVersions
+
+    Assert-Equal "AllOld" $plan.Mode
+    Assert-Equal 2 @($plan.Targets).Count
+    Assert-True (@($plan.Targets) -contains "$store\OpenAI.Codex_0_x64__publisher")
+    Assert-True (@($plan.Targets) -contains "$store\OpenAI.Codex_1_x64__publisher")
+    Assert-True (@($plan.Targets) -notcontains "$store\OpenAI.Codex_2_x64__publisher")
+}
+
+Test-Case "cleanup planning rejects unmanaged or ambiguous paths" {
+    $store = "C:\Local\codex-plusplus\store-apps"
+    $current = "$store\OpenAI.Codex_2_x64__publisher\app"
+
+    Assert-Throws {
+        Get-CodexMirrorCleanupPlan `
+            -ManagedStoreRoot $store `
+            -CurrentAppRoot $current `
+            -PreviousAppRoot "C:\Other\OpenAI.Codex_1_x64__publisher\app"
+    } "immediate child"
+    Assert-Throws {
+        Get-CodexMirrorCleanupPlan `
+            -ManagedStoreRoot $store `
+            -CurrentAppRoot $current `
+            -CandidatePackageRoots "$store\nested\OpenAI.Codex_1_x64__publisher" `
+            -CleanupAllOldVersions
+    } "immediate child"
+    Assert-Throws {
+        Get-CodexMirrorCleanupPlan `
+            -ManagedStoreRoot $store `
+            -CurrentAppRoot $current `
+            -CandidatePackageRoots "$store\unrelated" `
+            -CleanupAllOldVersions
+    } "Unrecognized"
+}
+
+Test-Case "cleanup deletion blocks a running old mirror" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-cleanup-running-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        $store = Join-Path $root "store-apps"
+        $currentApp = Join-Path $store "OpenAI.Codex_2_x64__publisher/app"
+        $oldPackage = Join-Path $store "OpenAI.Codex_1_x64__publisher"
+        $oldExecutable = Join-Path $oldPackage "app/ChatGPT.exe"
+        New-Item -ItemType Directory -Path $currentApp, (Split-Path $oldExecutable -Parent) -Force | Out-Null
+        [System.IO.File]::WriteAllText($oldExecutable, "running")
+        $snapshot = [pscustomobject] @{
+            Succeeded = $true
+            ExecutablePaths = @($oldExecutable)
+            FailureReason = ""
+        }
+
+        Assert-Throws {
+            Remove-CodexMirrorCleanupTargets `
+                -ManagedStoreRoot $store `
+                -CurrentAppRoot $currentApp `
+                -Targets @($oldPackage) `
+                -ProcessSnapshot $snapshot
+        } "running"
+        Assert-True (Test-Path -LiteralPath $oldPackage -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "cleanup deletion fails closed when process discovery fails" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-cleanup-process-query-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        $store = Join-Path $root "store-apps"
+        $currentApp = Join-Path $store "OpenAI.Codex_2_x64__publisher/app"
+        $oldPackage = Join-Path $store "OpenAI.Codex_1_x64__publisher"
+        New-Item -ItemType Directory -Path $currentApp, $oldPackage -Force | Out-Null
+        $snapshot = [pscustomobject] @{
+            Succeeded = $false
+            ExecutablePaths = @()
+            FailureReason = "CIM unavailable"
+        }
+
+        Assert-Throws {
+            Remove-CodexMirrorCleanupTargets `
+                -ManagedStoreRoot $store `
+                -CurrentAppRoot $currentApp `
+                -Targets @($oldPackage) `
+                -ProcessSnapshot $snapshot
+        } "process discovery failed.*CIM unavailable"
+        Assert-True (Test-Path -LiteralPath $oldPackage -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "cleanup deletion removes only validated old mirrors" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-cleanup-success-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        $store = Join-Path $root "store-apps"
+        $currentPackage = Join-Path $store "OpenAI.Codex_2_x64__publisher"
+        $currentApp = Join-Path $currentPackage "app"
+        $oldPackage = Join-Path $store "OpenAI.Codex_1_x64__publisher"
+        $unrelated = Join-Path $store "unrelated"
+        New-Item -ItemType Directory -Path $currentApp, $oldPackage, $unrelated -Force | Out-Null
+        $snapshot = [pscustomobject] @{
+            Succeeded = $true
+            ExecutablePaths = @((Join-Path $currentApp "ChatGPT.exe"))
+            FailureReason = ""
+        }
+
+        $removed = @(Remove-CodexMirrorCleanupTargets `
+            -ManagedStoreRoot $store `
+            -CurrentAppRoot $currentApp `
+            -Targets @($oldPackage) `
+            -ProcessSnapshot $snapshot)
+
+        Assert-Equal 1 $removed.Count
+        Assert-Equal (Resolve-NormalizedPath $oldPackage) $removed[0]
+        Assert-True (!(Test-Path -LiteralPath $oldPackage))
+        Assert-True (Test-Path -LiteralPath $currentPackage -PathType Container)
+        Assert-True (Test-Path -LiteralPath $unrelated -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Test-Case "cleanup deletion refuses the current managed mirror" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-cleanup-current-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        $store = Join-Path $root "store-apps"
+        $currentPackage = Join-Path $store "OpenAI.Codex_2_x64__publisher"
+        $currentApp = Join-Path $currentPackage "app"
+        New-Item -ItemType Directory -Path $currentApp -Force | Out-Null
+        $snapshot = [pscustomobject] @{
+            Succeeded = $true
+            ExecutablePaths = @()
+            FailureReason = ""
+        }
+
+        Assert-Throws {
+            Remove-CodexMirrorCleanupTargets `
+                -ManagedStoreRoot $store `
+                -CurrentAppRoot $currentApp `
+                -Targets @($currentPackage) `
+                -ProcessSnapshot $snapshot
+        } "current managed Codex package"
+        Assert-True (Test-Path -LiteralPath $currentPackage -PathType Container)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
 }
 
 Test-Case "classifies current injection and link" {

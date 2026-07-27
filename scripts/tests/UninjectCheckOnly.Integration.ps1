@@ -1,68 +1,58 @@
 $ErrorActionPreference = "Stop"
 
-function Get-OptionalFileHash
-{
-    param([string] $Path)
-
-    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
-}
-
-function Get-LinkSnapshot
-{
-    param([string] $Path)
-
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    if ($null -eq $item) { return "Missing" }
-    $linkType = $item.PSObject.Properties["LinkType"].Value
-    $target = @($item.PSObject.Properties["Target"].Value) -join "|"
-    return "$linkType|$target"
-}
-
-function Get-DirectoryMetadata
-{
-    param([string] $Path)
-
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    if ($null -eq $item) { return "Missing" }
-    $children = @(Get-ChildItem -LiteralPath $Path -Force | Sort-Object Name | ForEach-Object {
-        "$($_.Name)|$($_.Attributes)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
-    })
-    return "$($item.Attributes)|$($item.CreationTimeUtc.Ticks)|$($item.LastWriteTimeUtc.Ticks)|$($children -join ';')"
-}
-
 $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $entryPoint = Join-Path $repositoryRoot "Uninject-CodexPlusPlus.ps1"
-$statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
-$liveLink = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
-$sourceRoot = Join-Path $env:USERPROFILE ".codex-plusplus/source"
-$state = if (Test-Path -LiteralPath $statePath -PathType Leaf) {
-    Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
-} else {
-    $null
-}
-$recordedAsar = if ($null -ne $state -and $state.appRoot) {
-    Join-Path ([string] $state.appRoot) "resources/app.asar"
-} else {
-    $null
-}
-
-$beforeState = Get-OptionalFileHash $statePath
-$beforeLink = Get-LinkSnapshot $liveLink
-$beforeSource = Get-DirectoryMetadata $sourceRoot
-$beforeAsar = Get-OptionalFileHash $recordedAsar
+$modulePath = Join-Path $repositoryRoot "scripts/UnityLinkMaintenance.psm1"
 $pwshPath = (Get-Process -Id $PID).Path
+$root = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "unity-links-uninject-" + [guid]::NewGuid().ToString("N"))
+$originalAppData = $env:APPDATA
+$originalPath = $env:PATH
 
-& $pwshPath -NoProfile -File $entryPoint -CheckOnly
-$entryPointExitCode = $LASTEXITCODE
-
-if ($entryPointExitCode -notin @(0, 2))
+try
 {
-    throw "Uninject-CodexPlusPlus.ps1 -CheckOnly exited with $entryPointExitCode."
-}
-if ($beforeState -cne (Get-OptionalFileHash $statePath)) { throw "Codex++ state changed during -CheckOnly." }
-if ($beforeLink -cne (Get-LinkSnapshot $liveLink)) { throw "The live tweak link changed during -CheckOnly." }
-if ($beforeSource -cne (Get-DirectoryMetadata $sourceRoot)) { throw "The Codex++ source changed during -CheckOnly." }
-if ($beforeAsar -cne (Get-OptionalFileHash $recordedAsar)) { throw "The recorded mirror ASAR changed during -CheckOnly." }
+    $env:APPDATA = Join-Path $root "AppData/Roaming"
+    $env:PATH = ""
+    $liveLink = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
+    $sentinel = Join-Path $env:APPDATA "codex-plusplus/tweaks/keep.txt"
+    Import-Module $modulePath -Force
+    $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $repositoryRoot
+    Set-TweakJunction -LinkPath $liveLink -ExpectedTarget $layout.TweakRoot | Out-Null
+    [System.IO.File]::WriteAllText($sentinel, "keep")
 
-Write-Host "PASS Uninject-CodexPlusPlus.ps1 -CheckOnly is mutation-free"
+    $checkOutput = & $pwshPath -NoProfile -File $entryPoint -CheckOnly 2>&1
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Uninject-CodexPlusPlus.ps1 -CheckOnly exited with $LASTEXITCODE`: $checkOutput"
+    }
+    if (($checkOutput -join [Environment]::NewLine) -notmatch "Status: UninjectRequired")
+    {
+        throw "Uninject check did not report UninjectRequired: $checkOutput"
+    }
+    if (!(Test-Path -LiteralPath $liveLink))
+    {
+        throw "Uninject -CheckOnly removed the live tweak link."
+    }
+
+    $applyOutput = & $pwshPath -NoProfile -File $entryPoint 2>&1
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Uninject-CodexPlusPlus.ps1 exited with $LASTEXITCODE`: $applyOutput"
+    }
+    if (Test-Path -LiteralPath $liveLink)
+    {
+        throw "Uninject did not remove the live tweak junction."
+    }
+    if (!(Test-Path -LiteralPath $sentinel -PathType Leaf))
+    {
+        throw "Uninject removed an unrelated tweak sibling."
+    }
+}
+finally
+{
+    $env:APPDATA = $originalAppData
+    $env:PATH = $originalPath
+    if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+}
+
+Write-Host "PASS Uninject-CodexPlusPlus.ps1 removes only the tweak junction"
