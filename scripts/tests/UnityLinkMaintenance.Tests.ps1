@@ -194,7 +194,7 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     Assert-Equal "kpkhxlgy0/unity-links-codex" $tweakManifest.githubRepo
     Assert-Equal "0.2.2" $tweakManifest.version
     Assert-Equal "0.2.2" $tweakPackage.version
-    Assert-Equal "0.2.2" $unityPackage.version
+    Assert-Equal "0.2.3" $unityPackage.version
     Assert-Equal "https://github.com/kpkhxlgy0/unity-links-unity/blob/master/LICENSE" `
         $unityPackage.licensesUrl
 

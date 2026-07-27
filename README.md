@@ -82,7 +82,7 @@ Codex++ Store users install only `unity-links-codex`. Unity Package Manager user
 `unity-links-unity`; the current stable tagged Git URL is:
 
 ```text
-https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.2
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.3
 ```
 
 Use this umbrella checkout when you need the coordinated Windows installer, local `file:` dependency, integration
