@@ -4,8 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$modulePath = Join-Path $PSScriptRoot "scripts/UnityLinkMaintenance.psm1"
-Import-Module $modulePath -Force
+$scriptsRoot = Join-Path $PSScriptRoot "scripts"
+Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force
+Import-Module (Join-Path $scriptsRoot "CodexTweakLink.psm1") -Force
 
 try
 {

@@ -1,8 +1,15 @@
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "TestHarness.ps1")
-$modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) "UnityLinkMaintenance.psm1"
-Import-Module $modulePath -Force
+$scriptsRoot = Split-Path $PSScriptRoot -Parent
+foreach ($moduleName in @(
+        "UnityLinkCommon.psm1",
+        "UnityPackageMaintenance.psm1",
+        "CodexTweakLink.psm1",
+        "CodexPlusPlusMaintenance.psm1"))
+{
+    Import-Module (Join-Path $scriptsRoot $moduleName) -Force
+}
 
 function Unity-Project-TestCase
 {
@@ -664,12 +671,11 @@ Test-Case "cleanup deletion refuses the current managed mirror" {
     }
 }
 
-Test-Case "classifies current injection and link" {
+Test-Case "classifies current mirror and launcher" {
     $parameters = @{
         AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
         CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
         StatusText = "Current ASAR matches patched"
-        LinkStatus = "Current"
         RunningExecutablePaths = @()
     }
     $result = Get-CodexMaintenanceState @parameters
@@ -681,23 +687,10 @@ Test-Case "classifies stale recorded mirror as InjectionRequired" {
         AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\new\app" }
         CodexState = [pscustomobject] @{ appRoot = "C:\old\app" }
         StatusText = "Current ASAR matches patched"
-        LinkStatus = "Current"
         RunningExecutablePaths = @("C:\Program Files\WindowsApps\OpenAI.Codex\app\Codex.exe")
     }
     $result = Get-CodexMaintenanceState @parameters
     Assert-Equal "InjectionRequired" $result.Status
-}
-
-Test-Case "classifies a missing junction after current injection as LinkRequired" {
-    $parameters = @{
-        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
-        CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
-        StatusText = "ASAR matches patched"
-        LinkStatus = "Missing"
-        RunningExecutablePaths = @()
-    }
-    $result = Get-CodexMaintenanceState @parameters
-    Assert-Equal "LinkRequired" $result.Status
 }
 
 Test-Case "blocks stale injection while the exact target mirror is running" {
@@ -705,24 +698,11 @@ Test-Case "blocks stale injection while the exact target mirror is running" {
         AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\new\app" }
         CodexState = [pscustomobject] @{ appRoot = "C:\old\app" }
         StatusText = "ASAR differs"
-        LinkStatus = "Current"
         RunningExecutablePaths = @("C:\new\app\Codex.exe")
     }
     $result = Get-CodexMaintenanceState @parameters
     Assert-Equal "Blocked" $result.Status
     Assert-True $result.TargetMirrorRunning
-}
-
-Test-Case "blocks an unsafe real directory at the tweak path" {
-    $parameters = @{
-        AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
-        CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
-        StatusText = "ASAR matches patched"
-        LinkStatus = "Unsafe"
-        RunningExecutablePaths = @()
-    }
-    $result = Get-CodexMaintenanceState @parameters
-    Assert-Equal "Blocked" $result.Status
 }
 
 Test-Case "refuses to replace a real tweak directory" {
@@ -969,7 +949,6 @@ Test-Case "classifies a stale Codex++ launcher as LauncherRequired" {
         AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
         CodexState = [pscustomobject] @{ appRoot = "C:\mirror\app" }
         StatusText = "ASAR matches patched"
-        LinkStatus = "Current"
         LauncherStatus = "Required"
         RunningExecutablePaths = @()
     }
@@ -1283,7 +1262,6 @@ Test-Case "maintenance state blocks a failed process query" {
         -AppLayout ([pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }) `
         -CodexState ([pscustomobject] @{ appRoot = "C:\mirror\app" }) `
         -StatusText "current asar: abc (matches patched)" `
-        -LinkStatus "Current" `
         -ProcessQuerySucceeded $false `
         -ProcessQueryFailureReason "CIM unavailable"
     Assert-Equal "Blocked" $result.Status
@@ -1291,15 +1269,14 @@ Test-Case "maintenance state blocks a failed process query" {
     Assert-True ($result.BlockDetail -match "CIM unavailable")
 }
 
-Test-Case "maintenance state allows link reload while injection is current" {
+Test-Case "maintenance state remains current while the patched mirror runs" {
     $result = Get-CodexMaintenanceState `
         -AppLayout ([pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }) `
         -CodexState ([pscustomobject] @{ appRoot = "C:\mirror\app" }) `
         -StatusText "current asar: abc (matches patched)" `
-        -LinkStatus "WrongTarget" `
         -RunningExecutablePaths @("C:\mirror\app\ChatGPT.exe") `
         -ProcessQuerySucceeded $true
-    Assert-Equal "LinkRequired" $result.Status
+    Assert-Equal "Current" $result.Status
     Assert-Equal "" $result.BlockReason
 }
 

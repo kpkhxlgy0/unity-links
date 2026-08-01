@@ -82,16 +82,23 @@ https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.3
 
 ## 首次安装
 
-先检测环境，再安装固定的 Codex++ 1.0.0。安装脚本也是日常维护入口：它会注入或修复最新 Codex Appx 镜像、维护
-启动入口和 tweak junction，并清理本次被替换的上一个镜像：
+先检测环境，再安装固定的 Codex++ 1.0.0。安装脚本也是日常维护入口：它会创建或修复最新 Codex Appx 受管镜像、
+维护启动入口，并清理本次被替换的上一个镜像。它不会检查或修改 Unity Links tweak junction：
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
-脚本不会关闭、重启或启动 Codex。如果输出 `Blocked` 和退出码 `2`，按提示手动关闭 Codex，再重新运行同一命令。
-不要提前假设需要关闭；只有脚本确认正在运行的镜像会被修改时才需要关闭。
+首次使用时，Install 成功后再单独创建 Unity Links tweak junction：
+
+```powershell
+pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
+```
+
+Install 脚本不会关闭、重启或启动 Codex。如果 Install 输出 `Blocked` 和退出码 `2`，按提示手动关闭 Codex，再重新
+运行同一命令。不要提前假设需要关闭；只有 Install 确认正在运行的镜像会被修改时才需要关闭。
 
 然后为当前 Unity 项目安装 package。仓库位于该项目内部时不传参数：
 
@@ -124,11 +131,11 @@ pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
-`Install-CodexPlusPlus.ps1` 自动选择版本最高的已安装 Codex Appx，维护对应的独立 Codex++ 镜像、CMD shim、开始
-菜单快捷方式，以及 `%APPDATA%\codex-plusplus\tweaks\com.kpk.unity-asset-links` junction。它从
-`AppxManifest.xml` 读取真正的桌面入口，因此兼容 Appx 同时包含辅助启动器和桌面主程序的结构。
-脚本会在维护前记录 `state.json` 指向的镜像；只有新的当前镜像完全校验成功后，才删除这一个被替换的上一版镜像。
-检查模式只打印相同的清理计划，不删除任何内容。
+`Install-CodexPlusPlus.ps1` 自动选择版本最高的已安装 Codex Appx，维护对应的独立 Codex++ 镜像、CMD shim 和开始
+菜单快捷方式。它从 `AppxManifest.xml` 读取真正的桌面入口，因此兼容 Appx 同时包含辅助启动器和桌面主程序的
+结构。脚本会在维护前记录 `state.json` 指向的镜像；只有新的当前镜像完全校验成功后，才删除这一个被替换的上一版
+镜像。检查模式只打印相同的清理计划，不删除任何内容。Install 不会检查、创建、修复或 reload Unity Links tweak
+junction；Codex Appx 更新后，已有的正确 junction 不需要重复执行 Inject。
 
 如需清理当前版本以外所有可识别的旧受管镜像，显式传入：
 
@@ -142,11 +149,10 @@ pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CleanupAllOldVersions
 
 状态含义：
 
-- `Current`：镜像、CMD、开始菜单快捷方式和 tweak junction 都正确。
+- `Current`：镜像、CMD 和开始菜单快捷方式都正确。
 - `InjectionRequired`：最新 Codex 版本尚未注入，或镜像校验不匹配。
 - `LauncherRequired`：CMD 或开始菜单快捷方式缺失、过期；桌面快捷方式不参与此状态。
-- `LinkRequired`：注入正确，但 tweak junction 缺失或仍指向旧仓库位置。
-- `Blocked`：待修改或清理的镜像正在运行、进程查询失败，或 live tweak 路径是不能安全替换的真实目录。
+- `Blocked`：待修改或清理的镜像正在运行，或进程查询失败。
 
 ### 共享 Codex++ 维护
 
@@ -157,12 +163,12 @@ Unity Links 和 Unreal Links 共用同一份当前用户 Codex++ 受管镜像。
 - `ProcessQueryFailed`：脚本无法可靠确认 Codex 是否在运行，因此不执行任何写入。
 - `MirrorRunning`：会修改 ASAR 的安装或修复操作要求关闭全部 Codex 进程。
 - `OldMirrorRunning`：选中清理的旧镜像仍在运行，因此不会删除。
-- `UnsafeLink`：live tweak 路径是一个真实目录，脚本不会自动替换或删除。
+- `UnsafeLink`：Inject 或 Uninject 的目标是一个真实目录，脚本不会自动替换或删除。
 
-只要进程查询成功，已经正确 patch 的 Codex 运行时仍允许维护 tweak junction 和启动入口。同版本 ASAR
-漂移会直接修复受管镜像；只有最新镜像是新建、过期、缺失或不完整时，才在可靠确认 Codex 已关闭后从官方
-Appx 重建。脚本不会终止或重启 Codex。不要对这套共享环境直接运行原始 `codexplusplus install` 或 `repair`
-命令；请使用 `Install-CodexPlusPlus.ps1`，让两个引擎遵守相同的安全检查。
+只要进程查询成功，已经正确 patch 的 Codex 运行时仍允许维护启动入口。同版本 ASAR 漂移会直接修复受管镜像；
+只有最新镜像是新建、过期、缺失或不完整时，才在可靠确认 Codex 已关闭后从官方 Appx 重建。junction 维护是
+独立的 Inject 或 Uninject 操作，不参与 Install 阻塞。脚本不会终止或重启 Codex。不要对这套共享环境直接运行
+原始 `codexplusplus install` 或 `repair` 命令；请使用 `Install-CodexPlusPlus.ps1`，让两个引擎遵守相同的安全检查。
 
 ### 移动仓库
 
@@ -174,8 +180,8 @@ Appx 重建。脚本不会终止或重启 Codex。不要对这套共享环境直
 
 ### 只管理 Unity Links tweak junction
 
-`Inject-CodexPlusPlus.ps1` 现在只创建或修复本仓库的 tweak junction，不检查或修复 Codex Appx 镜像和启动入口。
-因此移动仓库后也可以使用这个轻量命令重新指向新位置：
+`Inject-CodexPlusPlus.ps1` 只创建或修复本仓库的 tweak junction。首次 Install 成功后运行一次；junction 缺失、
+不安全或仍指向旧仓库位置时再运行。它不检查或修复 Codex Appx 镜像和启动入口，日常 Appx 维护也不需要重复运行：
 
 ```powershell
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly

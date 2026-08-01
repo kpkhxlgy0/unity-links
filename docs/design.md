@@ -220,16 +220,15 @@ Automated Unity test suites and battle regression tests are outside this task un
 
 Installation and maintenance consists of:
 
-1. Use `Install-CodexPlusPlus.ps1` only when the compatible runtime is missing; otherwise preserve the installed
-   version.
-2. Use `Inject-CodexPlusPlus.ps1` to maintain the latest version-specific mirror and the exact `codex-tweak`
-   junction below `%APPDATA%\codex-plusplus\tweaks`. The script derives the real desktop executable from the Appx
-   manifest and maintains only the CMD shim and Start Menu shortcut. A legacy desktop shortcut is removed only when
-   its target is inside the managed Codex++ mirror store.
+1. Use `Install-CodexPlusPlus.ps1` to install or preserve the compatible runtime, maintain the latest
+   version-specific mirror, CMD shim, and Start Menu shortcut, and clean selected old mirrors. It never reads or
+   modifies a tweak junction and never reloads tweaks.
+2. After the first Install, use `Inject-CodexPlusPlus.ps1` to maintain only the exact `codex-tweak` junction below
+   `%APPDATA%\codex-plusplus\tweaks`. Use `Uninject-CodexPlusPlus.ps1` to inspect or remove only that junction.
 3. Use `Install-UnityPackage.ps1` once per Unity project to add `com.kpk.codex-unity-link` through a portable relative
    `file:` dependency. A repository inside the project is found by walking upward; an external repository requires
    `-UnityProject`.
-4. Let Unity compile the Editor-only package, then manually restart Codex if the maintenance script requests it.
+4. Let Unity compile the Editor-only package, then manually restart Codex after Inject changes the junction.
 
 The scripts derive their source paths from their own repository location and do not depend on a fixed checkout path.
 Because both the tweak junction and Unity package dependency reference this repository, moving it requires rerunning
@@ -244,10 +243,9 @@ mirror routes rebuilding to `OfficialAppRoot`, and only after a reliable check p
 running. Completeness requires the mirror root, `resources/app.asar`, and the manifest-derived desktop executable.
 A failed mutation rereads `state.json`, `codexplusplus status`, and mirror completeness while the lock is still held;
 the observed state is reported without assuming that the command exit code describes the final filesystem state. A
-failed direct mirror repair never falls back to the official Appx in the same run. Link and launcher-only maintenance
-may proceed while the current patched mirror runs when the initial process query succeeded. The watcher remains
-disabled, and an install entry releases its lock before starting the injection entry, which reacquires the lock and
-recomputes live state.
+failed direct mirror repair never falls back to the official Appx in the same run. Launcher-only maintenance may
+proceed while the current patched mirror runs when the initial process query succeeded. The watcher remains disabled.
+Tweak junction injection is a separate command and its state never affects Install maintenance or blocking.
 
 ## Explicit Non-Goals for Version 0.1.0
 

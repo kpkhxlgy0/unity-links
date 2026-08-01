@@ -6,7 +6,9 @@ param(
 Set-StrictMode -Version Latest
 
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "scripts/UnityLinkMaintenance.psm1") -Force
+$scriptsRoot = Join-Path $PSScriptRoot "scripts"
+Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force
+Import-Module (Join-Path $scriptsRoot "UnityPackageMaintenance.psm1") -Force
 
 try
 {

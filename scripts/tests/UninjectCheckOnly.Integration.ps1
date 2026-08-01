@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $entryPoint = Join-Path $repositoryRoot "Uninject-CodexPlusPlus.ps1"
-$modulePath = Join-Path $repositoryRoot "scripts/UnityLinkMaintenance.psm1"
+$scriptsRoot = Join-Path $repositoryRoot "scripts"
 $pwshPath = (Get-Process -Id $PID).Path
 $root = Join-Path ([System.IO.Path]::GetTempPath()) (
     "unity-links-uninject-" + [guid]::NewGuid().ToString("N"))
@@ -15,7 +15,8 @@ try
     $env:PATH = ""
     $liveLink = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
     $sentinel = Join-Path $env:APPDATA "codex-plusplus/tweaks/keep.txt"
-    Import-Module $modulePath -Force
+    Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force
+    Import-Module (Join-Path $scriptsRoot "CodexTweakLink.psm1") -Force
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $repositoryRoot
     Set-TweakJunction -LinkPath $liveLink -ExpectedTarget $layout.TweakRoot | Out-Null
     [System.IO.File]::WriteAllText($sentinel, "keep")

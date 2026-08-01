@@ -91,17 +91,24 @@ tests, or development against the exact component pair.
 ## First-Time Setup
 
 Check the environment first, then install the pinned Codex++ 1.0.0 release. The installation script is also the
-routine-maintenance entry point: it injects or repairs the newest Codex Appx mirror, maintains launchers and the tweak
-junction, and removes the one previous mirror replaced by the run:
+routine-maintenance entry point: it creates or repairs the newest Codex Appx managed mirror, maintains launchers, and
+removes the one previous mirror replaced by the run. It does not inspect or modify the Unity Links tweak junction:
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
-The script does not close, restart, or launch Codex. If it prints `Blocked` and exits with code `2`, manually close
-Codex as instructed and run the same command again. Do not assume in advance that Codex must be closed; this is only
-required when the script confirms that a running mirror would be modified.
+After Install succeeds on first use, create the Unity Links tweak junction separately:
+
+```powershell
+pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
+```
+
+The Install script does not close, restart, or launch Codex. If Install prints `Blocked` and exits with code `2`,
+manually close Codex as instructed and run the same command again. Do not assume in advance that Codex must be closed;
+this is only required when Install confirms that a running mirror would be modified.
 
 Next, install the package in the current Unity project. Omit the parameter when the repository is located inside that
 project:
@@ -139,11 +146,12 @@ pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
 `Install-CodexPlusPlus.ps1` automatically selects the highest installed Codex Appx version and maintains its separate
-Codex++ mirror, CMD shim, Start menu shortcut, and the
-`%APPDATA%\codex-plusplus\tweaks\com.kpk.unity-asset-links` junction. It reads the actual desktop entry point from
-`AppxManifest.xml`, so it remains compatible when an Appx contains both helper launchers and the desktop application.
-It records the mirror from `state.json` before maintenance and, after the new current mirror is fully verified,
-removes only that replaced previous mirror. Check mode prints the same cleanup plan without deleting anything.
+Codex++ mirror, CMD shim, and Start menu shortcut. It reads the actual desktop entry point from `AppxManifest.xml`, so
+it remains compatible when an Appx contains both helper launchers and the desktop application. It records the mirror
+from `state.json` before maintenance and, after the new current mirror is fully verified, removes only that replaced
+previous mirror. Check mode prints the same cleanup plan without deleting anything. Install does not inspect, create,
+repair, or reload the Unity Links tweak junction; an existing correct junction needs no repeated Inject after an Appx
+update.
 
 To remove every recognized old managed mirror instead of only the replaced previous mirror, pass the explicit option:
 
@@ -158,14 +166,11 @@ running.
 
 State meanings:
 
-- `Current`: the mirror, CMD shim, Start menu shortcut, and tweak junction are all correct.
+- `Current`: the mirror, CMD shim, and Start menu shortcut are all correct.
 - `InjectionRequired`: the latest Codex version has not been injected, or the mirror validation does not match.
 - `LauncherRequired`: the CMD shim or Start menu shortcut is missing or stale; the desktop shortcut does not affect
   this state.
-- `LinkRequired`: injection is correct, but the tweak junction is missing or still points to an old repository
-  location.
-- `Blocked`: a mirror that must be changed or removed is running, process discovery failed, or the live tweak path is
-  a real directory that cannot be replaced safely.
+- `Blocked`: a mirror that must be changed or removed is running, or process discovery failed.
 
 ### Shared Codex++ Maintenance
 
@@ -176,12 +181,13 @@ script at a time; both projects coordinate through one shared lock. A safety blo
 - `ProcessQueryFailed`: the script could not reliably determine whether Codex is running, so it performs no write.
 - `MirrorRunning`: an ASAR-changing install or repair requires every Codex process to be closed.
 - `OldMirrorRunning`: an old mirror selected for cleanup is still running and will not be deleted.
-- `UnsafeLink`: a live tweak path is a real directory and will not be replaced or removed automatically.
+- `UnsafeLink`: an Inject or Uninject target is a real directory and will not be replaced or removed automatically.
 
-Link and launcher maintenance remains available while a correctly patched Codex mirror is running, provided process
-discovery succeeded. Same-version ASAR drift is repaired directly against the managed mirror; a new, stale, missing,
-or incomplete mirror is rebuilt from the official Appx only after Codex is confirmed closed. The scripts never stop or
-restart Codex. Do not use raw `codexplusplus install` or `repair` commands for this shared setup; use
+Launcher maintenance remains available while a correctly patched Codex mirror is running, provided process discovery
+succeeded. Same-version ASAR drift is repaired directly against the managed mirror; a new, stale, missing, or
+incomplete mirror is rebuilt from the official Appx only after Codex is confirmed closed. Junction maintenance is a
+separate Inject or Uninject operation and never participates in Install blocking. The scripts never stop or restart
+Codex. Do not use raw `codexplusplus install` or `repair` commands for this shared setup; use
 `Install-CodexPlusPlus.ps1` so both engines observe the same safety checks.
 
 ### Moving the Repository
@@ -197,8 +203,9 @@ automatically. Keep the old directory until all of these steps succeed:
 
 ### Managing Only the Unity Links Tweak Junction
 
-`Inject-CodexPlusPlus.ps1` now creates or repairs only this repository's tweak junction. It does not inspect or repair
-the Codex Appx mirror or launchers, so it is also the lightweight command to run after moving the repository:
+`Inject-CodexPlusPlus.ps1` creates or repairs only this repository's tweak junction. Run it once after the first
+successful Install, or when the junction is missing, unsafe, or points at an old repository location. It does not
+inspect or repair the Codex Appx mirror or launchers, and routine Appx maintenance does not require rerunning it:
 
 ```powershell
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly

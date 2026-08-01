@@ -8,8 +8,9 @@ $ErrorActionPreference = "Stop"
 $codexPlusPlusVersion = [version] "1.0.0"
 $codexPlusPlusCommit = "f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7"
 $archiveUri = "https://codeload.github.com/b-nnett/codex-plusplus/zip/$codexPlusPlusCommit"
-$modulePath = Join-Path $PSScriptRoot "scripts/UnityLinkMaintenance.psm1"
-Import-Module $modulePath -Force
+$scriptsRoot = Join-Path $PSScriptRoot "scripts"
+Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force
+Import-Module (Join-Path $scriptsRoot "CodexPlusPlusMaintenance.psm1") -Force
 
 function Get-CommandVersion
 {
@@ -70,8 +71,6 @@ function Get-LiveMaintenanceContext
         [Parameter(Mandatory)] [System.Management.Automation.CommandInfo] $CommandInfo,
         [Parameter(Mandatory)] [object] $AppLayout,
         [Parameter(Mandatory)] [string] $StatePath,
-        [Parameter(Mandatory)] [string] $LinkPath,
-        [Parameter(Mandatory)] [string] $ExpectedTweakPath,
         [Parameter(Mandatory)] [string] $ExpectedLaunchExecutable,
         [Parameter(Mandatory)] [string] $LauncherCommandPath,
         [Parameter(Mandatory)] [string] $StartMenuShortcutPath,
@@ -84,14 +83,12 @@ function Get-LiveMaintenanceContext
         $statusText = (Invoke-CodexPlusPlus -CommandInfo $CommandInfo -Arguments @("status")) -join `
             [Environment]::NewLine
     }
-    $linkState = Get-TweakLinkState -LinkPath $LinkPath -ExpectedTarget $ExpectedTweakPath
     $launcherState = Get-CodexLauncherState -ExpectedExecutable $ExpectedLaunchExecutable `
         -CommandPath $LauncherCommandPath -StartMenuShortcutPath $StartMenuShortcutPath
     $maintenanceState = Get-CodexMaintenanceState `
         -AppLayout $AppLayout `
         -CodexState $codexState `
         -StatusText $statusText `
-        -LinkStatus $linkState.Status `
         -LauncherStatus $launcherState.Status `
         -RunningExecutablePaths @($ProcessSnapshot.ExecutablePaths) `
         -ProcessQuerySucceeded ([bool] $ProcessSnapshot.Succeeded) `
@@ -99,7 +96,6 @@ function Get-LiveMaintenanceContext
 
     return [pscustomobject] @{
         CodexState = $codexState
-        LinkState = $linkState
         LauncherState = $launcherState
         ProcessSnapshot = $ProcessSnapshot
         RunningPaths = @($ProcessSnapshot.ExecutablePaths)
@@ -193,9 +189,6 @@ try
         Write-Host "Recovered an abandoned Editor Links maintenance lock." -ForegroundColor Yellow
     }
 
-    $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $PSScriptRoot
-    Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
-
     if (!$env:USERPROFILE) { throw "USERPROFILE is not available." }
     if (!$env:LOCALAPPDATA) { throw "LOCALAPPDATA is not available." }
     if (!$env:APPDATA) { throw "APPDATA is not available." }
@@ -217,7 +210,6 @@ try
     }
 
     $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
-    $linkPath = Join-Path $env:APPDATA "codex-plusplus/tweaks/com.kpk.unity-asset-links"
     $launcherCommandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
     $programsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
     if (!$programsPath) { throw "The current user's Start Menu Programs folder is unavailable." }
@@ -311,8 +303,6 @@ try
             -CommandInfo $codexPlusPlusCommand `
             -AppLayout $appLayout `
             -StatePath $statePath `
-            -LinkPath $linkPath `
-            -ExpectedTweakPath $layout.TweakRoot `
             -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
             -LauncherCommandPath $launcherCommandPath `
             -StartMenuShortcutPath $startMenuShortcutPath `
@@ -336,7 +326,6 @@ try
     Write-Host "Official app: $($appLayout.OfficialAppRoot)"
     Write-Host "Managed mirror: $($appLayout.MirrorAppRoot)"
     Write-Host "Launch executable: $($launchLayout.MirrorExecutable)"
-    Write-Host "Tweak source: $($layout.TweakRoot)"
     Write-Host "Source root: $sourceRoot"
     Write-CleanupPlan -Plan $cleanupPlan
 
@@ -349,8 +338,6 @@ try
     }
     $blockDetail = if ($installState.Status -eq "Blocked") {
         $installState.Reason
-    } elseif ($blockReason -eq "UnsafeLink") {
-        "The live tweak path is a real directory and will not be replaced: $linkPath"
     } elseif ($null -ne $context) {
         $context.MaintenanceState.BlockDetail
     } else {
@@ -515,8 +502,6 @@ try
         -CommandInfo $codexPlusPlusCommand `
         -AppLayout $appLayout `
         -StatePath $statePath `
-        -LinkPath $linkPath `
-        -ExpectedTweakPath $layout.TweakRoot `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
         -StartMenuShortcutPath $startMenuShortcutPath `
@@ -574,8 +559,6 @@ try
         -CommandInfo $codexPlusPlusCommand `
         -AppLayout $appLayout `
         -StatePath $statePath `
-        -LinkPath $linkPath `
-        -ExpectedTweakPath $layout.TweakRoot `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
         -StartMenuShortcutPath $startMenuShortcutPath `
@@ -590,10 +573,6 @@ try
     {
         throw "Codex++ repair completed but the latest managed mirror is not current."
     }
-    if ($context.LinkState.Status -eq "Unsafe")
-    {
-        throw "The live tweak path became unsafe during maintenance: $linkPath"
-    }
 
     $launcherChanged = Set-CodexLauncherArtifacts `
         -ExpectedExecutable $launchLayout.MirrorExecutable `
@@ -606,15 +585,12 @@ try
             -ManagedStoreRoot $managedStoreRoot
         if ($desktopShortcutRemoved) { Write-Host "Removed the legacy managed desktop shortcut." }
     }
-    $linkChanged = Set-TweakJunction -LinkPath $linkPath -ExpectedTarget $layout.TweakRoot
 
     $processSnapshot = Get-CodexProcessSnapshot
     $context = Get-LiveMaintenanceContext `
         -CommandInfo $codexPlusPlusCommand `
         -AppLayout $appLayout `
         -StatePath $statePath `
-        -LinkPath $linkPath `
-        -ExpectedTweakPath $layout.TweakRoot `
         -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
         -LauncherCommandPath $launcherCommandPath `
         -StartMenuShortcutPath $startMenuShortcutPath `
@@ -671,12 +647,12 @@ try
         throw "The current managed mirror changed during old-version cleanup."
     }
 
-    Write-Host "Codex++ installation, current mirror, launchers, and Unity Links tweak are current."
+    Write-Host "Codex++ installation, current mirror, and launchers are current."
     $codexRunningOutsideMirror = @(
         $context.RunningPaths |
             Where-Object { !(Test-PathInside -Path $_ -Root $appLayout.MirrorAppRoot) }
     ).Count -gt 0
-    if (($injectionChanged -or $launcherChanged -or $linkChanged) -and $codexRunningOutsideMirror)
+    if (($injectionChanged -or $launcherChanged) -and $codexRunningOutsideMirror)
     {
         Write-Host (
             "Codex is still running outside the managed mirror. Close Codex manually, then relaunch it " +
