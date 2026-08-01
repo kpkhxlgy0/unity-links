@@ -85,4 +85,28 @@ Test-Case "Codex++ maintenance loads with only its common dependency" {
     }
 }
 
+Test-Case "public entry points reject Windows PowerShell below version 7 before execution" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $windowsPowerShell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    Assert-True (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf) `
+        "Windows PowerShell 5.1 is required for the compatibility guard test."
+
+    $entryPoints = @(
+        "Install-UnityPackage.ps1",
+        "Install-CodexPlusPlus.ps1",
+        "Inject-CodexPlusPlus.ps1",
+        "Uninject-CodexPlusPlus.ps1")
+
+    foreach ($entryPointName in $entryPoints)
+    {
+        $entryPoint = Join-Path $repositoryRoot $entryPointName
+        $output = & $windowsPowerShell -NoLogo -NoProfile -File $entryPoint -CheckOnly 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+
+        Assert-True ($exitCode -ne 0) "$entryPointName unexpectedly ran under Windows PowerShell 5.1."
+        Assert-True ($output -match "#requires") `
+            "$entryPointName did not fail through its PowerShell version requirement.`n$output"
+    }
+}
+
 Complete-Tests
