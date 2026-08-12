@@ -72,6 +72,8 @@ $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop
 $desktopShortcutPath = if ($desktopPath) { Join-Path $desktopPath "Codex++.lnk" } else { $null }
 $pwshPath = (Get-Process -Id $PID).Path
 $originalAppData = $env:APPDATA
+$originalLocalAppData = $env:LOCALAPPDATA
+$originalPSModulePath = $env:PSModulePath
 
 foreach ($arguments in @(
         @("-CheckOnly"),
@@ -92,7 +94,7 @@ foreach ($arguments in @(
     {
         throw "Install-CodexPlusPlus.ps1 $arguments exited with $exitCode."
     }
-    foreach ($required in @("Codex Appx:", "Managed mirror:", "Cleanup mode:"))
+    foreach ($required in @("Codex app:", "Managed mirror:", "Cleanup mode:"))
     {
         if (!$text.Contains($required)) { throw "Install check output is missing '$required'." }
     }
@@ -186,6 +188,39 @@ foreach ($result in $scenarioResults)
         {
             throw "Install output for $($result.Scenario) still contains junction state: $forbidden"
         }
+    }
+}
+
+$noAppxRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "unity-links-install-no-appx-" + [guid]::NewGuid().ToString("N"))
+try
+{
+    $env:APPDATA = Join-Path $noAppxRoot "Roaming"
+    $env:LOCALAPPDATA = Join-Path $noAppxRoot "Local"
+    $env:PSModulePath = Join-Path $noAppxRoot "Modules"
+    New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA, $env:PSModulePath -Force |
+        Out-Null
+
+    $output = & $pwshPath -NoProfile -File $entryPoint -CheckOnly 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = $output -join [Environment]::NewLine
+    if ($exitCode -notin @(0, 2))
+    {
+        throw "Install -CheckOnly without Appx exited with $exitCode`: $text"
+    }
+    if ($text -match 'Get-AppxPackage|Appx.*could not be loaded')
+    {
+        throw "Install -CheckOnly still depends on the Appx PowerShell module: $text"
+    }
+}
+finally
+{
+    $env:APPDATA = $originalAppData
+    $env:LOCALAPPDATA = $originalLocalAppData
+    $env:PSModulePath = $originalPSModulePath
+    if (Test-Path -LiteralPath $noAppxRoot)
+    {
+        Remove-Item -LiteralPath $noAppxRoot -Recurse -Force
     }
 }
 

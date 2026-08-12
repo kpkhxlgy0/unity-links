@@ -82,8 +82,8 @@ https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.3
 
 ## 首次安装
 
-先检测环境，再安装固定的 Codex++ 1.0.0。安装脚本也是日常维护入口：它会创建或修复最新 Codex Appx 受管镜像、
-维护启动入口，并清理本次被替换的上一个镜像。它不会检查或修改 Unity Links tweak junction：
+先检测环境，再安装固定的 Codex++ 1.0.0。安装脚本也是日常维护入口：它委托 Codex++ 原生发现并维护独立版或
+Store 版，修正启动入口，并清理本次被替换的上一个 Store 镜像。它不会检查或修改 Unity Links tweak junction：
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
@@ -117,25 +117,26 @@ pwsh -NoProfile -File .\Install-UnityPackage.ps1 `
 ```
 
 打开对应 Unity 项目，等待 Unity 完成 package 编译，并确认 Console 没有该 package 的编译错误。最后从 Windows
-开始菜单启动 `Codex++`；不要从原始 `Codex` 入口启动。维护脚本只保留 CMD shim 和开始菜单快捷方式，不创建桌面
-快捷方式；由旧版本创建且确实指向 Codex++ 受管镜像的桌面快捷方式会被安全移除。
+开始菜单启动 `Codex++`。原生维护成功后，脚本会从 `state.json.appRoot` 解析真实的 `ChatGPT.exe`（兼容旧
+`Codex.exe`），并修正 CMD shim 和开始菜单快捷方式；由旧版本创建且确实指向 Codex++ 受管镜像的桌面快捷方式
+会被安全移除。
 
 ## 日常维护
 
 ### Codex Desktop 更新后
 
-每次 Codex Appx 更新后先检测，再运行同一个安装/维护入口：
+每次 Codex Desktop 更新后先检测，再运行同一个安装/维护入口：
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
-`Install-CodexPlusPlus.ps1` 自动选择版本最高的已安装 Codex Appx，维护对应的独立 Codex++ 镜像、CMD shim 和开始
-菜单快捷方式。它从 `AppxManifest.xml` 读取真正的桌面入口，因此兼容 Appx 同时包含辅助启动器和桌面主程序的
-结构。脚本会在维护前记录 `state.json` 指向的镜像；只有新的当前镜像完全校验成功后，才删除这一个被替换的上一版
-镜像。检查模式只打印相同的清理计划，不删除任何内容。Install 不会检查、创建、修复或 reload Unity Links tweak
-junction；Codex Appx 更新后，已有的正确 junction 不需要重复执行 Inject。
+`Install-CodexPlusPlus.ps1` 使用原生 `install --no-watcher`，不传 `--app`，由 Codex++ 的 `locateCodex()` 选择
+独立版或 Store 版。完成后，包装脚本根据记录的 app root 校正 CMD shim 和开始菜单入口。脚本会在维护前记录
+`state.json` 指向的镜像；只有新的当前镜像完全校验成功后，才删除这一个被替换的上一版镜像。检查模式只打印
+相同的清理计划，不删除任何内容。Install 不会检查、创建、修复或 reload Unity Links tweak junction；Codex
+Desktop 更新后，已有的正确 junction 不需要重复执行 Inject。
 
 如需清理当前版本以外所有可识别的旧受管镜像，显式传入：
 
@@ -161,7 +162,8 @@ Unity Links 和 Unreal Links 共用同一份当前用户 Codex++ 受管镜像。
 
 - `MaintenanceBusy`：另一个 Unity Links 或 Unreal Links 维护脚本正持有共享锁。
 - `ProcessQueryFailed`：脚本无法可靠确认 Codex 是否在运行，因此不执行任何写入。
-- `MirrorRunning`：会修改 ASAR 的安装或修复操作要求关闭全部 Codex 进程。
+- `DesktopAppRunning` / `MirrorRunning`：桌面应用正在待修改的 app root 下运行。VS Code/Cursor 插件启动且位于
+  编辑器扩展目录的 `codex.exe` 不会阻断维护。
 - `OldMirrorRunning`：选中清理的旧镜像仍在运行，因此不会删除。
 - `UnsafeLink`：Inject 或 Uninject 的目标是一个真实目录，脚本不会自动替换或删除。
 

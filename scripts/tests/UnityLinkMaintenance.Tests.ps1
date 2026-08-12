@@ -771,6 +771,13 @@ Test-Case "requires pinned install when Codex++ is missing" {
     Assert-Equal "InstallRequired" $state.Status
 }
 
+Test-Case "native install arguments leave Codex app discovery to Codex++" {
+    $arguments = @(Get-CodexPlusPlusInstallArguments)
+    Assert-Equal `
+        '["install","--no-watcher"]' `
+        (ConvertTo-Json -InputObject $arguments -Compress)
+}
+
 Test-Case "keeps an existing compatible Codex++ without downgrade" {
     $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.1.0") -NodeMajor 22 -HasNpm $true `
         -TargetMirrorRunning $false
@@ -944,6 +951,25 @@ Test-Case "uses the Appx manifest executable instead of the Codex-named launcher
     }
 }
 
+Test-Case "desktop executable resolution prefers ChatGPT in the Codex++ app root" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "codex-desktop-executable-" + [guid]::NewGuid().ToString("N"))
+    try
+    {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $root "Codex.exe"), "legacy")
+        [System.IO.File]::WriteAllText((Join-Path $root "ChatGPT.exe"), "current")
+
+        Assert-Equal `
+            (Join-Path $root "ChatGPT.exe") `
+            (Get-CodexDesktopExecutable -AppRoot $root)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Test-Case "classifies a stale Codex++ launcher as LauncherRequired" {
     $parameters = @{
         AppLayout = [pscustomobject] @{ MirrorAppRoot = "C:\mirror\app" }
@@ -1055,15 +1081,16 @@ Test-Case "preserves an unrelated desktop shortcut with the same name" {
     }
 }
 
-Test-Case "recognizes the new ChatGPT desktop executable name" {
+Test-Case "process discovery preserves all readable executable paths for app-root filtering" {
     $processes = @(
         [pscustomobject] @{ Name = "ChatGPT.exe"; ExecutablePath = "C:\mirror\app\ChatGPT.exe" },
         [pscustomobject] @{ Name = "codex.exe"; ExecutablePath = "C:\mirror\app\resources\codex.exe" },
         [pscustomobject] @{ Name = "pwsh.exe"; ExecutablePath = "C:\Program Files\PowerShell\7\pwsh.exe" })
     $paths = @(Get-CodexExecutablePathsFromProcesses -Processes $processes)
-    Assert-Equal 2 $paths.Count
+    Assert-Equal 3 $paths.Count
     Assert-True ($paths -contains "C:\mirror\app\ChatGPT.exe")
     Assert-True ($paths -contains "C:\mirror\app\resources\codex.exe")
+    Assert-True ($paths -contains "C:\Program Files\PowerShell\7\pwsh.exe")
 }
 
 Test-Case "returns no executable paths when the process query is empty" {
@@ -1087,12 +1114,12 @@ Test-Case "process snapshot fails closed when CIM throws" {
     Assert-True ($snapshot.FailureReason -match "CIM unavailable")
 }
 
-Test-Case "process snapshot fails closed when a target path is unreadable" {
+Test-Case "process snapshot ignores processes whose executable path is unreadable" {
     $snapshot = Get-CodexProcessSnapshot -ProcessQuery {
         @([pscustomobject] @{ Name = "ChatGPT.exe"; ExecutablePath = $null })
     }
-    Assert-True (!$snapshot.Succeeded)
-    Assert-True ($snapshot.FailureReason -match "ExecutablePath")
+    Assert-True $snapshot.Succeeded
+    Assert-Equal 0 @($snapshot.ExecutablePaths).Count
 }
 
 Test-Case "mutation guard blocks an unknown process state" {
@@ -1100,19 +1127,29 @@ Test-Case "mutation guard blocks an unknown process state" {
         Succeeded = $false
         ExecutablePaths = @()
         FailureReason = "CIM unavailable"
-    })
+    }) -TargetAppRoots @("C:\mirror\app")
     Assert-True (!$guard.Allowed)
     Assert-Equal "ProcessQueryFailed" $guard.BlockReason
 }
 
-Test-Case "mutation guard blocks any running Codex process" {
+Test-Case "mutation guard ignores editor Codex CLI outside the desktop app root" {
+    $guard = Get-CodexMutationGuard -ProcessSnapshot ([pscustomobject] @{
+        Succeeded = $true
+        ExecutablePaths = @("C:\Users\tester\.vscode\extensions\openai.chatgpt\bin\codex.exe")
+        FailureReason = ""
+    }) -TargetAppRoots @("C:\mirror\app")
+    Assert-True $guard.Allowed
+    Assert-Equal "" $guard.BlockReason
+}
+
+Test-Case "mutation guard blocks ChatGPT inside the desktop app root" {
     $guard = Get-CodexMutationGuard -ProcessSnapshot ([pscustomobject] @{
         Succeeded = $true
         ExecutablePaths = @("C:\mirror\app\ChatGPT.exe")
         FailureReason = ""
-    })
+    }) -TargetAppRoots @("C:\mirror\app")
     Assert-True (!$guard.Allowed)
-    Assert-Equal "MirrorRunning" $guard.BlockReason
+    Assert-Equal "DesktopAppRunning" $guard.BlockReason
 }
 
 Test-Case "maintenance mutex blocks a second process and recovers abandonment" {
@@ -1337,6 +1374,7 @@ Test-Case "mirror completeness requires the ASAR and launch executable" {
 Test-Case "guarded mutation does not invoke writes when the recheck blocks" {
     $calls = [pscustomobject] @{ Mutation = 0; Observation = 0 }
     $result = Invoke-CodexMutationSafely `
+        -TargetAppRoots @("C:\mirror\app") `
         -ProcessQuery {
             @([pscustomobject] @{
                 Name = "ChatGPT.exe"
@@ -1346,7 +1384,7 @@ Test-Case "guarded mutation does not invoke writes when the recheck blocks" {
         -Mutation { $calls.Mutation++ } `
         -FailureObservation { $calls.Observation++ }
     Assert-True (!$result.Invoked)
-    Assert-Equal "MirrorRunning" $result.BlockReason
+    Assert-Equal "DesktopAppRunning" $result.BlockReason
     Assert-Equal 0 $calls.Mutation
     Assert-Equal 0 $calls.Observation
 }
@@ -1354,6 +1392,7 @@ Test-Case "guarded mutation does not invoke writes when the recheck blocks" {
 Test-Case "guarded mutation rereads state after command failure" {
     $calls = [pscustomobject] @{ Mutation = 0; Observation = 0 }
     $result = Invoke-CodexMutationSafely `
+        -TargetAppRoots @("C:\mirror\app") `
         -ProcessQuery { @() } `
         -Mutation {
             $calls.Mutation++

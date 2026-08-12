@@ -91,8 +91,9 @@ tests, or development against the exact component pair.
 ## First-Time Setup
 
 Check the environment first, then install the pinned Codex++ 1.0.0 release. The installation script is also the
-routine-maintenance entry point: it creates or repairs the newest Codex Appx managed mirror, maintains launchers, and
-removes the one previous mirror replaced by the run. It does not inspect or modify the Unity Links tweak junction:
+routine-maintenance entry point: it delegates Codex discovery to the native Codex++ installer, refreshes the patch,
+and removes the one previous Store mirror replaced by the run. It does not inspect or modify the Unity Links tweak
+junction:
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
@@ -129,29 +130,28 @@ pwsh -NoProfile -File .\Install-UnityPackage.ps1 `
 ```
 
 Open the target Unity project, wait for package compilation to finish, and confirm that the Console contains no
-compilation errors from this package. Finally, launch `Codex++` from the Windows Start menu; do not use the original
-`Codex` entry. The maintenance scripts keep only the CMD shim and Start menu shortcut and do not create a desktop
-shortcut. A desktop shortcut created by an older version is removed safely only when it actually targets the managed
-Codex++ mirror.
+compilation errors from this package. After native Codex++ maintenance, the `Codex++` Windows Start menu entry and CMD
+shim are verified and rewritten to the real `ChatGPT.exe` under `state.json.appRoot` (with `Codex.exe` retained as a
+legacy fallback). A desktop shortcut is removed safely only when it actually targets the managed Codex++ Store mirror.
 
 ## Routine Maintenance
 
 ### After a Codex Desktop Update
 
-After every Codex Appx update, check the state and then run the same installation/maintenance entry point:
+After every Codex Desktop update, check the state and then run the same installation/maintenance entry point:
 
 ```powershell
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 ```
 
-`Install-CodexPlusPlus.ps1` automatically selects the highest installed Codex Appx version and maintains its separate
-Codex++ mirror, CMD shim, and Start menu shortcut. It reads the actual desktop entry point from `AppxManifest.xml`, so
-it remains compatible when an Appx contains both helper launchers and the desktop application. It records the mirror
-from `state.json` before maintenance and, after the new current mirror is fully verified, removes only that replaced
-previous mirror. Check mode prints the same cleanup plan without deleting anything. Install does not inspect, create,
-repair, or reload the Unity Links tweak junction; an existing correct junction needs no repeated Inject after an Appx
-update.
+`Install-CodexPlusPlus.ps1` invokes Codex++ as `install --no-watcher` without `--app`, so Codex++ uses its own
+`locateCodex()` implementation for both standalone and Microsoft Store installs. Standalone installs are maintained in
+place. Store installs use the version-specific mirror created by Codex++. After native installation, the wrapper reads
+the recorded app root and corrects the CMD shim and Start menu shortcut to the actual desktop executable. It records
+`state.json.appRoot` before maintenance and, after native install and status verification succeed, removes only the
+replaced previous Store mirror. Check mode inspects the recorded state and prints the cleanup plan without running
+discovery or changing files. Install does not inspect, create, repair, or reload the Unity Links tweak junction.
 
 To remove every recognized old managed mirror instead of only the replaced previous mirror, pass the explicit option:
 
@@ -179,16 +179,17 @@ script at a time; both projects coordinate through one shared lock. A safety blo
 
 - `MaintenanceBusy`: another Unity Links or Unreal Links maintenance script holds the shared lock.
 - `ProcessQueryFailed`: the script could not reliably determine whether Codex is running, so it performs no write.
-- `MirrorRunning`: an ASAR-changing install or repair requires every Codex process to be closed.
+- `DesktopAppRunning` / `MirrorRunning`: the desktop executable is running under an app root that would be changed.
+  Codex CLI processes started by VS Code or Cursor are outside that root and do not block maintenance.
 - `OldMirrorRunning`: an old mirror selected for cleanup is still running and will not be deleted.
 - `UnsafeLink`: an Inject or Uninject target is a real directory and will not be replaced or removed automatically.
 
-Launcher maintenance remains available while a correctly patched Codex mirror is running, provided process discovery
-succeeded. Same-version ASAR drift is repaired directly against the managed mirror; a new, stale, missing, or
-incomplete mirror is rebuilt from the official Appx only after Codex is confirmed closed. Junction maintenance is a
-separate Inject or Uninject operation and never participates in Install blocking. The scripts never stop or restart
-Codex. Do not use raw `codexplusplus install` or `repair` commands for this shared setup; use
-`Install-CodexPlusPlus.ps1` so both engines observe the same safety checks.
+Normal mode re-runs the native Codex++ install path, so Codex must be closed before a patch or Store mirror can be
+refreshed. Codex++ itself selects the supported app location and performs Store mirroring; the wrapper adds the shared
+lock, pinned first installation, status verification, and guarded old-mirror cleanup. Junction maintenance is a
+separate Inject or Uninject operation. The scripts never stop or restart Codex. Do not run concurrent raw
+`codexplusplus install` or `repair` commands for this shared setup; use `Install-CodexPlusPlus.ps1` so both engines
+observe the same safety checks.
 
 ### Moving the Repository
 

@@ -32,7 +32,6 @@ function Get-CommandVersion
     }
     return [version] $versionMatch.Value
 }
-
 function Invoke-CheckedCommand
 {
     param(
@@ -67,52 +66,47 @@ function Read-CodexPlusPlusState
     return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
 }
 
-function Get-LiveMaintenanceContext
+function Get-RecordedAppRoot
+{
+    param([AllowNull()] [object] $State)
+
+    if ($null -eq $State -or
+        $State.PSObject.Properties.Name -notcontains "appRoot" -or
+        !$State.appRoot)
+    {
+        return ""
+    }
+    return Resolve-NormalizedPath ([string] $State.appRoot)
+}
+
+function Test-ManagedAppRoot
 {
     param(
-        [Parameter(Mandatory)] [System.Management.Automation.CommandInfo] $CommandInfo,
-        [Parameter(Mandatory)] [object] $AppLayout,
-        [Parameter(Mandatory)] [string] $StatePath,
-        [Parameter(Mandatory)] [string] $ExpectedLaunchExecutable,
-        [Parameter(Mandatory)] [string] $LauncherCommandPath,
-        [Parameter(Mandatory)] [string] $StartMenuShortcutPath,
-        [Parameter(Mandatory)] [object] $ProcessSnapshot)
+        [AllowEmptyString()] [string] $AppRoot,
+        [Parameter(Mandatory)] [string] $ManagedStoreRoot)
 
-    $codexState = Read-CodexPlusPlusState -Path $StatePath
-    $statusText = ""
-    if ($null -ne $codexState)
-    {
-        $statusText = (Invoke-CodexPlusPlus -CommandInfo $CommandInfo -Arguments @("status")) -join `
-            [Environment]::NewLine
-    }
-    $launcherState = Get-CodexLauncherState -ExpectedExecutable $ExpectedLaunchExecutable `
-        -CommandPath $LauncherCommandPath -StartMenuShortcutPath $StartMenuShortcutPath
-    $maintenanceState = Get-CodexMaintenanceState `
-        -AppLayout $AppLayout `
-        -CodexState $codexState `
-        -StatusText $statusText `
-        -LauncherStatus $launcherState.Status `
-        -RunningExecutablePaths @($ProcessSnapshot.ExecutablePaths) `
-        -ProcessQuerySucceeded ([bool] $ProcessSnapshot.Succeeded) `
-        -ProcessQueryFailureReason ([string] $ProcessSnapshot.FailureReason)
-
-    return [pscustomobject] @{
-        CodexState = $codexState
-        LauncherState = $launcherState
-        ProcessSnapshot = $ProcessSnapshot
-        RunningPaths = @($ProcessSnapshot.ExecutablePaths)
-        MaintenanceState = $maintenanceState
-    }
+    return $AppRoot -and (Test-PathInside -Path $AppRoot -Root $ManagedStoreRoot)
 }
 
 function Get-LiveCleanupPlan
 {
     param(
         [Parameter(Mandatory)] [string] $ManagedStoreRoot,
-        [Parameter(Mandatory)] [string] $CurrentAppRoot,
+        [AllowEmptyString()] [string] $CurrentAppRoot,
         [AllowEmptyString()] [string] $PreviousAppRoot,
         [switch] $AllOldVersions)
 
+    $mode = if ($AllOldVersions) { "AllOld" } else { "Previous" }
+    if (!(Test-ManagedAppRoot -AppRoot $CurrentAppRoot -ManagedStoreRoot $ManagedStoreRoot))
+    {
+        return [pscustomobject] @{ Mode = $mode; CurrentPackageRoot = ""; Targets = @() }
+    }
+
+    $managedPrevious = if (Test-ManagedAppRoot -AppRoot $PreviousAppRoot -ManagedStoreRoot $ManagedStoreRoot) {
+        $PreviousAppRoot
+    } else {
+        ""
+    }
     $candidateRoots = if ($AllOldVersions -and (Test-Path -LiteralPath $ManagedStoreRoot -PathType Container)) {
         @(
             Get-ChildItem -LiteralPath $ManagedStoreRoot -Directory -Force |
@@ -124,7 +118,7 @@ function Get-LiveCleanupPlan
     return Get-CodexMirrorCleanupPlan `
         -ManagedStoreRoot $ManagedStoreRoot `
         -CurrentAppRoot $CurrentAppRoot `
-        -PreviousAppRoot $PreviousAppRoot `
+        -PreviousAppRoot $managedPrevious `
         -CandidatePackageRoots $candidateRoots `
         -CleanupAllOldVersions:$AllOldVersions
 }
@@ -140,6 +134,56 @@ function Write-CleanupPlan
         return
     }
     foreach ($target in @($Plan.Targets)) { Write-Host "Cleanup target: $target" }
+}
+
+function Get-MaintenancePreview
+{
+    param(
+        [AllowNull()] [System.Management.Automation.CommandInfo] $CommandInfo,
+        [AllowNull()] [object] $State,
+        [Parameter(Mandatory)] [object] $ProcessSnapshot)
+
+    $appRoot = Get-RecordedAppRoot -State $State
+    if (!$appRoot -or $null -eq $CommandInfo)
+    {
+        return [pscustomobject] @{
+            Status = "Deferred"
+            BlockReason = ""
+            BlockDetail = ""
+            StatusText = ""
+        }
+    }
+    if (!$ProcessSnapshot.Succeeded)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            BlockReason = "ProcessQueryFailed"
+            BlockDetail = [string] $ProcessSnapshot.FailureReason
+            StatusText = ""
+        }
+    }
+
+    $statusText = (Invoke-CodexPlusPlus -CommandInfo $CommandInfo -Arguments @("status")) -join `
+        [Environment]::NewLine
+    $patchCurrent = $statusText -match '(?i)matches patched'
+    $targetRunning = @(
+        $ProcessSnapshot.ExecutablePaths |
+            Where-Object { $_ -and (Test-PathInside -Path $_ -Root $appRoot) }).Count -gt 0
+    if (!$patchCurrent -and $targetRunning)
+    {
+        return [pscustomobject] @{
+            Status = "Blocked"
+            BlockReason = "CodexRunning"
+            BlockDetail = "Codex is running from the recorded Codex++ app root."
+            StatusText = $statusText
+        }
+    }
+    return [pscustomobject] @{
+        Status = if ($patchCurrent) { "Current" } else { "MaintenanceRequired" }
+        BlockReason = ""
+        BlockDetail = ""
+        StatusText = $statusText
+    }
 }
 
 function Restore-PreviousSource
@@ -183,12 +227,12 @@ try
     if (!$maintenanceLock.Acquired)
     {
         [Console]::Error.WriteLine(
-            "Blocked [MaintenanceBusy]: another Editor Links maintenance operation is running.")
+            "Blocked [MaintenanceBusy]: another Codex++ maintenance operation is running.")
         exit 2
     }
     if ($maintenanceLock.Abandoned)
     {
-        Write-Host "Recovered an abandoned Editor Links maintenance lock." -ForegroundColor Yellow
+        Write-Host "Recovered an abandoned Codex++ maintenance lock." -ForegroundColor Yellow
     }
 
     if (!$env:USERPROFILE) { throw "USERPROFILE is not available." }
@@ -203,35 +247,10 @@ try
         throw "Refusing to use an unexpected Codex++ source root: $sourceRoot"
     }
 
-    $package = Select-LatestCodexPackage -Packages @(Get-AppxPackage -Name OpenAI.Codex)
-    $appLayout = Get-CodexAppLayout -Package $package -LocalAppData $env:LOCALAPPDATA
-    $launchLayout = Get-CodexPackageLaunchLayout -Package $package -AppLayout $appLayout
-    if (!(Test-Path -LiteralPath $appLayout.OfficialAsar -PathType Leaf))
-    {
-        throw "Official Codex ASAR not found: $($appLayout.OfficialAsar)"
-    }
-
     $statePath = Join-Path $env:APPDATA "codex-plusplus/state.json"
-    $launcherCommandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
-    $programsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
-    if (!$programsPath) { throw "The current user's Start Menu Programs folder is unavailable." }
-    $startMenuShortcutPath = Join-Path $programsPath "Codex++.lnk"
-    $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
-    $desktopShortcutPath = if ($desktopPath) { Join-Path $desktopPath "Codex++.lnk" } else { $null }
     $managedStoreRoot = Join-Path $env:LOCALAPPDATA "codex-plusplus/store-apps"
     $preMaintenanceState = Read-CodexPlusPlusState -Path $statePath
-    $previousAppRoot = if ($null -ne $preMaintenanceState -and
-        $preMaintenanceState.PSObject.Properties.Name -contains "appRoot" -and
-        $preMaintenanceState.appRoot) {
-        [string] $preMaintenanceState.appRoot
-    } else {
-        ""
-    }
-    $cleanupPlan = Get-LiveCleanupPlan `
-        -ManagedStoreRoot $managedStoreRoot `
-        -CurrentAppRoot $appLayout.MirrorAppRoot `
-        -PreviousAppRoot $previousAppRoot `
-        -AllOldVersions:$CleanupAllOldVersions
+    $previousAppRoot = Get-RecordedAppRoot -State $preMaintenanceState
 
     $installedVersion = $null
     $codexPlusPlusCommand = Get-Command codexplusplus -ErrorAction SilentlyContinue
@@ -263,7 +282,10 @@ try
     }
     $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
     $processSnapshot = Get-CodexProcessSnapshot
-    $codexRunning = $processSnapshot.Succeeded -and @($processSnapshot.ExecutablePaths).Count -gt 0
+    $codexRunning = $processSnapshot.Succeeded -and $previousAppRoot -and @(
+        $processSnapshot.ExecutablePaths |
+            Where-Object { $_ -and (Test-PathInside -Path $_ -Root $previousAppRoot) }
+    ).Count -gt 0
 
     if (!$processSnapshot.Succeeded)
     {
@@ -291,57 +313,53 @@ try
         $installBlockReason = if ($installState.Status -ne "Blocked") {
             ""
         } elseif ($codexRunning) {
-            "MirrorRunning"
+            "DesktopAppRunning"
         } else {
             "PrerequisiteFailed"
         }
         $installState | Add-Member -NotePropertyName BlockReason -NotePropertyValue $installBlockReason
     }
 
-    $context = $null
-    if ($installState.Status -eq "Current")
-    {
-        $context = Get-LiveMaintenanceContext `
+    $maintenancePreview = if ($installState.Status -eq "Current") {
+        Get-MaintenancePreview `
             -CommandInfo $codexPlusPlusCommand `
-            -AppLayout $appLayout `
-            -StatePath $statePath `
-            -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
-            -LauncherCommandPath $launcherCommandPath `
-            -StartMenuShortcutPath $startMenuShortcutPath `
+            -State $preMaintenanceState `
             -ProcessSnapshot $processSnapshot
-    }
-    $displayStatus = if ($null -ne $context) {
-        $context.MaintenanceState.Status
     } else {
-        $installState.Status
+        $null
     }
-    $displayReason = if ($null -ne $context) {
-        "Compatible Codex++ is installed; routine maintenance state was evaluated."
+    $cleanupPreview = Get-LiveCleanupPlan `
+        -ManagedStoreRoot $managedStoreRoot `
+        -CurrentAppRoot $previousAppRoot `
+        -PreviousAppRoot $previousAppRoot `
+        -AllOldVersions:$CleanupAllOldVersions
+    $displayAppRoot = if ($previousAppRoot) { $previousAppRoot } else { "Auto-detected by Codex++ during install" }
+    $displayMirror = if (Test-ManagedAppRoot -AppRoot $previousAppRoot -ManagedStoreRoot $managedStoreRoot) {
+        $previousAppRoot
     } else {
-        $installState.Reason
+        "Not applicable"
     }
 
-    Write-Host "Status: $displayStatus"
-    Write-Host "Reason: $displayReason"
+    Write-Host "Status: $($installState.Status)"
+    Write-Host "Reason: $($installState.Reason)"
     Write-Host "Pinned Codex++: $codexPlusPlusVersion ($codexPlusPlusCommit)"
-    Write-Host "Codex Appx: $($package.PackageFullName)"
-    Write-Host "Official app: $($appLayout.OfficialAppRoot)"
-    Write-Host "Managed mirror: $($appLayout.MirrorAppRoot)"
-    Write-Host "Launch executable: $($launchLayout.MirrorExecutable)"
+    Write-Host "Codex app: $displayAppRoot"
+    Write-Host "Managed mirror: $displayMirror"
+    Write-Host "Maintenance status: $(if ($null -eq $maintenancePreview) { 'Deferred' } else { $maintenancePreview.Status })"
     Write-Host "Source root: $sourceRoot"
-    Write-CleanupPlan -Plan $cleanupPlan
+    Write-CleanupPlan -Plan $cleanupPreview
 
     $blockReason = if ($installState.Status -eq "Blocked") {
         $installState.BlockReason
-    } elseif ($null -ne $context -and $context.MaintenanceState.Status -eq "Blocked") {
-        $context.MaintenanceState.BlockReason
+    } elseif ($null -ne $maintenancePreview -and $maintenancePreview.Status -eq "Blocked") {
+        $maintenancePreview.BlockReason
     } else {
         ""
     }
     $blockDetail = if ($installState.Status -eq "Blocked") {
         $installState.Reason
-    } elseif ($null -ne $context) {
-        $context.MaintenanceState.BlockDetail
+    } elseif ($null -ne $maintenancePreview) {
+        $maintenancePreview.BlockDetail
     } else {
         ""
     }
@@ -360,7 +378,9 @@ try
         exit 2
     }
 
-    $injectionChanged = $false
+    $installedCli = $null
+    $previousRoot = "$sourceRoot.previous"
+    $sourceSwapPending = $false
     if ($installState.Status -eq "InstallRequired")
     {
         $workRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -397,8 +417,6 @@ try
         {
             throw "Pinned Codex++ build did not produce: $builtCli"
         }
-
-        $previousRoot = "$sourceRoot.previous"
         $swapState = Get-CodexPlusPlusSourceSwapState `
             -SourceExists (Test-Path -LiteralPath $sourceRoot) `
             -PreviousExists (Test-Path -LiteralPath $previousRoot)
@@ -410,77 +428,63 @@ try
             Move-Item -LiteralPath $sourceRoot -Destination $previousRoot
         }
         Move-Item -LiteralPath $extractedSource -Destination $sourceRoot
-
-        $initialInstallSucceeded = $false
-        try
+        $sourceSwapPending = $true
+        $installedCli = Join-Path $sourceRoot "packages/installer/dist/cli.js"
+        $directVersion = Get-CommandVersion -CommandInfo $nodeCommand -PrefixArguments @($installedCli)
+        if ($directVersion -ne $codexPlusPlusVersion)
         {
-            $installedCli = Join-Path $sourceRoot "packages/installer/dist/cli.js"
-            $directVersion = Get-CommandVersion -CommandInfo $nodeCommand -PrefixArguments @($installedCli)
-            if ($directVersion -ne $codexPlusPlusVersion)
-            {
-                throw "Expected the built Codex++ CLI to report 1.0.0, found $directVersion."
-            }
-
-            $installArguments = @(
-                $installedCli,
-                "install",
-                "--app",
-                $appLayout.OfficialAppRoot,
-                "--no-watcher")
-            $mutationResult = Invoke-CodexMutationSafely `
-                -Mutation {
-                    Invoke-CheckedCommand `
-                        -Executable $nodeCommand.Source `
-                        -Arguments $installArguments `
-                        -FailureMessage "Pinned Codex++ installer failed."
-                } `
-                -FailureObservation {
-                    Get-CodexPostFailureObservation `
-                        -StatePath $statePath `
-                        -StatusQuery {
-                            $statusOutput = & $nodeCommand.Source $installedCli status 2>&1
-                            if ($LASTEXITCODE -ne 0)
-                            {
-                                throw "Pinned Codex++ status failed: " +
-                                    ($statusOutput -join [Environment]::NewLine)
-                            }
-                            $statusOutput
-                        } `
-                        -AppLayout $appLayout `
-                        -LaunchLayout $launchLayout
-                }
-            if (!$mutationResult.Invoked)
-            {
-                Restore-PreviousSource `
-                    -SourceRoot $sourceRoot `
-                    -PreviousRoot $previousRoot `
-                    -WorkRoot $workRoot
-                [Console]::Error.WriteLine(
-                    "Blocked [$($mutationResult.BlockReason)]: $($mutationResult.FailureReason)")
-                exit 2
-            }
-            if (!$mutationResult.Succeeded)
-            {
-                $observation = $mutationResult.FailureObservation |
-                    ConvertTo-Json -Compress -Depth 4
-                throw "$($mutationResult.ErrorMessage) Post-failure observation: $observation"
-            }
-            $mutationResult.Output | ForEach-Object { Write-Host $_ }
-            $initialInstallSucceeded = $true
-            $injectionChanged = $true
+            throw "Expected the built Codex++ CLI to report 1.0.0, found $directVersion."
         }
-        catch
+    }
+
+    $nativeArguments = @(Get-CodexPlusPlusInstallArguments)
+    $mutationResult = Invoke-CodexMutationSafely `
+        -TargetAppRoots @($previousAppRoot) `
+        -Mutation {
+            if ($installedCli)
+            {
+                Invoke-CheckedCommand `
+                    -Executable $nodeCommand.Source `
+                    -Arguments (@($installedCli) + $nativeArguments) `
+                    -FailureMessage "Pinned Codex++ installer failed."
+            }
+            else
+            {
+                Invoke-CodexPlusPlus `
+                    -CommandInfo $codexPlusPlusCommand `
+                    -Arguments $nativeArguments
+            }
+        } `
+        -FailureObservation {
+            $observedState = Read-CodexPlusPlusState -Path $statePath
+            [pscustomobject] @{
+                RecordedAppRoot = Get-RecordedAppRoot -State $observedState
+                StatePresent = $null -ne $observedState
+            }
+        }
+    if (!$mutationResult.Invoked)
+    {
+        if ($sourceSwapPending)
         {
-            if (!$initialInstallSucceeded)
-            {
-                Restore-PreviousSource `
-                    -SourceRoot $sourceRoot `
-                    -PreviousRoot $previousRoot `
-                    -WorkRoot $workRoot
-            }
-            throw
+            Restore-PreviousSource -SourceRoot $sourceRoot -PreviousRoot $previousRoot -WorkRoot $workRoot
         }
+        [Console]::Error.WriteLine(
+            "Blocked [$($mutationResult.BlockReason)]: $($mutationResult.FailureReason)")
+        exit 2
+    }
+    if (!$mutationResult.Succeeded)
+    {
+        if ($sourceSwapPending)
+        {
+            Restore-PreviousSource -SourceRoot $sourceRoot -PreviousRoot $previousRoot -WorkRoot $workRoot
+        }
+        $observation = $mutationResult.FailureObservation | ConvertTo-Json -Compress -Depth 4
+        throw "$($mutationResult.ErrorMessage) Post-failure observation: $observation"
+    }
+    $mutationResult.Output | ForEach-Object { Write-Host $_ }
 
+    if ($installedCli)
+    {
         $codexPlusPlusCommand = Get-Command codexplusplus -ErrorAction SilentlyContinue
         if ($null -eq $codexPlusPlusCommand)
         {
@@ -491,127 +495,41 @@ try
         {
             throw "Expected the installed Codex++ command to report 1.0.0, found $shimVersion."
         }
-
-        if (Test-Path -LiteralPath $previousRoot)
-        {
-            $expectedPreviousRoot = "$expectedSourceRoot.previous"
-            Remove-VerifiedTree -Path $previousRoot -ExpectedPath $expectedPreviousRoot
-        }
     }
 
-    $processSnapshot = Get-CodexProcessSnapshot
-    $context = Get-LiveMaintenanceContext `
-        -CommandInfo $codexPlusPlusCommand `
-        -AppLayout $appLayout `
-        -StatePath $statePath `
-        -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
-        -LauncherCommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath `
-        -ProcessSnapshot $processSnapshot
-    if ($context.MaintenanceState.Status -eq "Blocked")
+    $postMaintenanceState = Read-CodexPlusPlusState -Path $statePath
+    $currentAppRoot = Get-RecordedAppRoot -State $postMaintenanceState
+    if (!$currentAppRoot) { throw "Codex++ install completed without recording an app root." }
+    $currentAsar = Join-Path $currentAppRoot "resources/app.asar"
+    if (!(Test-Path -LiteralPath $currentAsar -PathType Leaf))
     {
-        [Console]::Error.WriteLine(
-            "Blocked [$($context.MaintenanceState.BlockReason)]: $($context.MaintenanceState.BlockDetail)")
-        exit 2
+        throw "Codex++ recorded app ASAR was not found: $currentAsar"
+    }
+    $statusText = (Invoke-CodexPlusPlus -CommandInfo $codexPlusPlusCommand -Arguments @("status")) -join `
+        [Environment]::NewLine
+    if ($statusText -notmatch '(?i)matches patched')
+    {
+        throw "Codex++ installation completed but status does not report the patched app as current."
     }
 
-    if ($context.MaintenanceState.InjectionRequired)
+    $launchExecutable = Get-CodexDesktopExecutable -AppRoot $currentAppRoot
+    $launcherCommandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
+    $programsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+    if (!$programsPath) { throw "The current user's Start Menu Programs folder is unavailable." }
+    $startMenuShortcutPath = Join-Path $programsPath "Codex++.lnk"
+    if (Set-CodexLauncherArtifacts `
+            -ExpectedExecutable $launchExecutable `
+            -CommandPath $launcherCommandPath `
+            -StartMenuShortcutPath $startMenuShortcutPath)
     {
-        $repairPlan = Get-CodexRepairPlan `
-            -AppLayout $appLayout `
-            -CodexState $context.CodexState `
-            -InjectionRequired $context.MaintenanceState.InjectionRequired `
-            -MirrorComplete (Test-CodexMirrorComplete -AppLayout $appLayout -LaunchLayout $launchLayout)
-        $repairArguments = @("repair", "--force", "--app", $repairPlan.TargetAppRoot)
-        $mutationResult = Invoke-CodexMutationSafely `
-            -Mutation {
-                Invoke-CodexPlusPlus `
-                    -CommandInfo $codexPlusPlusCommand `
-                    -Arguments $repairArguments
-            } `
-            -FailureObservation {
-                Get-CodexPostFailureObservation `
-                    -StatePath $statePath `
-                    -StatusQuery {
-                        Invoke-CodexPlusPlus `
-                            -CommandInfo $codexPlusPlusCommand `
-                            -Arguments @("status")
-                    } `
-                    -AppLayout $appLayout `
-                    -LaunchLayout $launchLayout
-            }
-        if (!$mutationResult.Invoked)
-        {
-            [Console]::Error.WriteLine(
-                "Blocked [$($mutationResult.BlockReason)]: $($mutationResult.FailureReason)")
-            exit 2
-        }
-        if (!$mutationResult.Succeeded)
-        {
-            $observation = $mutationResult.FailureObservation |
-                ConvertTo-Json -Compress -Depth 4
-            throw "$($mutationResult.ErrorMessage) Post-failure observation: $observation"
-        }
-        $mutationResult.Output | ForEach-Object { Write-Host $_ }
-        $injectionChanged = $true
+        Write-Host "Updated Codex++ launchers to use: $launchExecutable"
     }
 
-    $processSnapshot = Get-CodexProcessSnapshot
-    $context = Get-LiveMaintenanceContext `
-        -CommandInfo $codexPlusPlusCommand `
-        -AppLayout $appLayout `
-        -StatePath $statePath `
-        -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
-        -LauncherCommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath `
-        -ProcessSnapshot $processSnapshot
-    if ($context.MaintenanceState.Status -eq "Blocked")
-    {
-        [Console]::Error.WriteLine(
-            "Blocked [$($context.MaintenanceState.BlockReason)]: $($context.MaintenanceState.BlockDetail)")
-        exit 2
-    }
-    if ($context.MaintenanceState.InjectionRequired)
-    {
-        throw "Codex++ repair completed but the latest managed mirror is not current."
-    }
-
-    $launcherChanged = Set-CodexLauncherArtifacts `
-        -ExpectedExecutable $launchLayout.MirrorExecutable `
-        -CommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath
-    if ($desktopShortcutPath)
-    {
-        $desktopShortcutRemoved = Remove-ManagedCodexDesktopShortcut `
-            -DesktopShortcutPath $desktopShortcutPath `
-            -ManagedStoreRoot $managedStoreRoot
-        if ($desktopShortcutRemoved) { Write-Host "Removed the legacy managed desktop shortcut." }
-    }
-
-    $processSnapshot = Get-CodexProcessSnapshot
-    $context = Get-LiveMaintenanceContext `
-        -CommandInfo $codexPlusPlusCommand `
-        -AppLayout $appLayout `
-        -StatePath $statePath `
-        -ExpectedLaunchExecutable $launchLayout.MirrorExecutable `
-        -LauncherCommandPath $launcherCommandPath `
-        -StartMenuShortcutPath $startMenuShortcutPath `
-        -ProcessSnapshot $processSnapshot
-    if ($context.MaintenanceState.Status -eq "Blocked")
-    {
-        [Console]::Error.WriteLine(
-            "Blocked [$($context.MaintenanceState.BlockReason)]: $($context.MaintenanceState.BlockDetail)")
-        exit 2
-    }
-    if ($context.MaintenanceState.Status -ne "Current")
-    {
-        throw "Maintenance verification failed with status: $($context.MaintenanceState.Status)"
-    }
-    if (!(Test-CodexMirrorComplete -AppLayout $appLayout -LaunchLayout $launchLayout))
-    {
-        throw "The current managed mirror is incomplete after maintenance."
-    }
-
+    $cleanupPlan = Get-LiveCleanupPlan `
+        -ManagedStoreRoot $managedStoreRoot `
+        -CurrentAppRoot $currentAppRoot `
+        -PreviousAppRoot $previousAppRoot `
+        -AllOldVersions:$CleanupAllOldVersions
     $removedTargets = @()
     if (@($cleanupPlan.Targets).Count -gt 0)
     {
@@ -620,7 +538,7 @@ try
         {
             $removedTargets = @(Remove-CodexMirrorCleanupTargets `
                 -ManagedStoreRoot $managedStoreRoot `
-                -CurrentAppRoot $appLayout.MirrorAppRoot `
+                -CurrentAppRoot $currentAppRoot `
                 -Targets @($cleanupPlan.Targets) `
                 -ProcessSnapshot $cleanupSnapshot)
         }
@@ -633,8 +551,7 @@ try
                 } else {
                     "OldMirrorRunning"
                 }
-                [Console]::Error.WriteLine(
-                    "Blocked [$cleanupBlockReason]: $($_.Exception.Message)")
+                [Console]::Error.WriteLine("Blocked [$cleanupBlockReason]: $($_.Exception.Message)")
                 exit 2
             }
             throw
@@ -644,22 +561,32 @@ try
     {
         Write-Host "Removed old managed mirror: $removedTarget"
     }
-    if (!(Test-CodexMirrorComplete -AppLayout $appLayout -LaunchLayout $launchLayout))
+
+    if (Test-ManagedAppRoot -AppRoot $currentAppRoot -ManagedStoreRoot $managedStoreRoot)
     {
-        throw "The current managed mirror changed during old-version cleanup."
+        $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+        if ($desktopPath)
+        {
+            $desktopShortcutPath = Join-Path $desktopPath "Codex++.lnk"
+            if (Remove-ManagedCodexDesktopShortcut `
+                    -DesktopShortcutPath $desktopShortcutPath `
+                    -ManagedStoreRoot $managedStoreRoot)
+            {
+                Write-Host "Removed the legacy managed desktop shortcut."
+            }
+        }
     }
 
-    Write-Host "Codex++ installation, current mirror, and launchers are current."
-    $codexRunningOutsideMirror = @(
-        $context.RunningPaths |
-            Where-Object { !(Test-PathInside -Path $_ -Root $appLayout.MirrorAppRoot) }
-    ).Count -gt 0
-    if (($injectionChanged -or $launcherChanged) -and $codexRunningOutsideMirror)
+    if ($sourceSwapPending -and (Test-Path -LiteralPath $previousRoot))
     {
-        Write-Host (
-            "Codex is still running outside the managed mirror. Close Codex manually, then relaunch it " +
-            "before validating link clicks.") -ForegroundColor Yellow
+        $expectedPreviousRoot = "$expectedSourceRoot.previous"
+        Remove-VerifiedTree -Path $previousRoot -ExpectedPath $expectedPreviousRoot
     }
+
+    Write-Host "Codex++ installation and routine maintenance are current."
+    Write-Host "Codex app: $currentAppRoot"
+    Write-Host "Launch executable: $launchExecutable"
+    Write-Host "Discovery: Codex++ locateCodex (native install without --app)"
 }
 catch
 {

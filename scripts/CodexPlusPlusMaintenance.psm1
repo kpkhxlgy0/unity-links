@@ -86,6 +86,23 @@ function Get-CodexPackageLaunchLayout
     }
 }
 
+function Get-CodexDesktopExecutable
+{
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $AppRoot)
+
+    $root = Resolve-NormalizedPath $AppRoot
+    foreach ($name in @("ChatGPT.exe", "Codex.exe"))
+    {
+        $candidate = Join-Path $root $name
+        if (Test-Path -LiteralPath $candidate -PathType Leaf)
+        {
+            return Resolve-NormalizedPath $candidate
+        }
+    }
+    throw "Codex desktop executable was not found under the Codex++ app root: $root"
+}
+
 function Get-CodexExecutablePathsFromProcesses
 {
     [CmdletBinding()]
@@ -93,7 +110,7 @@ function Get-CodexExecutablePathsFromProcesses
 
     return @(
         $Processes |
-            Where-Object { $_.Name -in @("Codex.exe", "ChatGPT.exe") -and $_.ExecutablePath } |
+            Where-Object { $_.ExecutablePath } |
             ForEach-Object { [string] $_.ExecutablePath } |
             Select-Object -Unique
     )
@@ -107,26 +124,14 @@ function Get-CodexProcessSnapshot
             @(
                 Get-CimInstance `
                     Win32_Process `
-                    -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" `
                     -ErrorAction Stop)
         })
 
     try
     {
         $processes = @(& $ProcessQuery)
-        $targetProcesses = @(
-            $processes |
-                Where-Object { $_.Name -in @("Codex.exe", "ChatGPT.exe") })
-        $missingPath = @(
-            $targetProcesses |
-                Where-Object { !$_.ExecutablePath })
-        if ($missingPath.Count -gt 0)
-        {
-            throw "ExecutablePath is unavailable for a running Codex process."
-        }
-
         $paths = @(
-            Get-CodexExecutablePathsFromProcesses -Processes $targetProcesses |
+            Get-CodexExecutablePathsFromProcesses -Processes $processes |
                 ForEach-Object { Resolve-NormalizedPath ([string] $_) } |
                 Select-Object -Unique)
         return [pscustomobject] @{
@@ -148,7 +153,9 @@ function Get-CodexProcessSnapshot
 function Get-CodexMutationGuard
 {
     [CmdletBinding()]
-    param([Parameter(Mandatory)] [object] $ProcessSnapshot)
+    param(
+        [Parameter(Mandatory)] [object] $ProcessSnapshot,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $TargetAppRoots)
 
     if (!$ProcessSnapshot.Succeeded)
     {
@@ -158,12 +165,20 @@ function Get-CodexMutationGuard
             FailureReason = [string] $ProcessSnapshot.FailureReason
         }
     }
-    if (@($ProcessSnapshot.ExecutablePaths).Count -gt 0)
+    $runningPaths = @(
+        $ProcessSnapshot.ExecutablePaths |
+            Where-Object {
+                $executablePath = $_
+                $TargetAppRoots |
+                    Where-Object { $_ -and (Test-PathInside -Path $executablePath -Root $_) } |
+                    Select-Object -First 1
+            })
+    if ($runningPaths.Count -gt 0)
     {
         return [pscustomobject] @{
             Allowed = $false
-            BlockReason = "MirrorRunning"
-            FailureReason = "Codex is running and global maintenance requires it to be closed."
+            BlockReason = "DesktopAppRunning"
+            FailureReason = "The Codex desktop app is running from a target app root."
         }
     }
     return [pscustomobject] @{
@@ -203,6 +218,7 @@ function Invoke-CodexMutationSafely
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [scriptblock] $Mutation,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $TargetAppRoots,
         [scriptblock] $FailureObservation = { $null },
         [AllowNull()] [scriptblock] $ProcessQuery = $null)
 
@@ -211,7 +227,7 @@ function Invoke-CodexMutationSafely
     } else {
         Get-CodexProcessSnapshot -ProcessQuery $ProcessQuery
     }
-    $guard = Get-CodexMutationGuard -ProcessSnapshot $snapshot
+    $guard = Get-CodexMutationGuard -ProcessSnapshot $snapshot -TargetAppRoots $TargetAppRoots
     if (!$guard.Allowed)
     {
         return [pscustomobject] @{
@@ -683,6 +699,14 @@ function Get-CodexPlusPlusInstallState
     }
 }
 
+function Get-CodexPlusPlusInstallArguments
+{
+    [CmdletBinding()]
+    param()
+
+    return [string[]] @("install", "--no-watcher")
+}
+
 function Test-CodexPlusPlusSourceLayout
 {
     [CmdletBinding()]
@@ -960,6 +984,7 @@ Export-ModuleMember -Function @(
     "Select-LatestCodexPackage",
     "Get-CodexAppLayout",
     "Get-CodexPackageLaunchLayout",
+    "Get-CodexDesktopExecutable",
     "Get-CodexExecutablePathsFromProcesses",
     "Get-CodexProcessSnapshot",
     "Get-CodexMutationGuard",
@@ -974,6 +999,7 @@ Export-ModuleMember -Function @(
     "Remove-CodexMirrorCleanupTargets",
     "Get-CodexMaintenanceState",
     "Get-CodexPlusPlusInstallState",
+    "Get-CodexPlusPlusInstallArguments",
     "Test-CodexPlusPlusSourceLayout",
     "Get-CodexPlusPlusSourceSwapState",
     "Get-CodexUninjectState",
