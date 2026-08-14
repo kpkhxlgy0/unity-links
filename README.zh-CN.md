@@ -2,18 +2,18 @@
 
 # Unity Asset Links
 
-让 Codex Desktop 回复中的本地文件链接在属于 Unity 项目 `Assets`、`ProjectSettings` 或 `Packages` 目录时，
+让 Codex Desktop 或 Claude Code Desktop 回复中的本地文件链接在属于 Unity 项目 `Assets`、`ProjectSettings` 或 `Packages` 目录时，
 通过对应的 Unity Editor 打开。`Assets` 沿用 Unity 的普通资源打开逻辑，`ProjectSettings` 打开 Project
 Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 
 ## 前置条件
 
 - Windows 10/11。
-- 已为当前 Windows 用户安装官方 Codex Desktop。
+- 已为当前 Windows 用户安装官方 Codex Desktop、Claude Code Desktop，或两者都安装。
 - Unity 2022.3 项目。
 - PowerShell 7，命令名为 `pwsh`。
 - Git，用于克隆本仓库。
-- Node.js 20 或更新版本及 npm；首次安装 Codex++ 1.0.0 时使用。
+- Node.js 20 或更新版本及 npm；只在首次安装 Codex++ 1.0.0 时使用。Claude++ 普通用户不需要 Node.js。
 - 首次克隆仓库和首次安装 Codex++ 时可访问互联网。
 
 所有 PowerShell 命令都应在本仓库根目录运行。脚本通过 `$PSScriptRoot` 定位文件，不依赖固定盘符或固定项目名。
@@ -22,6 +22,7 @@ Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 
 这个仓库是集成和安装总入口。它通过 Git submodule，将独立发布的
 [Codex++ tweak](https://github.com/kpkhxlgy0/unity-links-codex) 固定在 `codex-tweak/`，将
+[Claude++ tweak](https://github.com/kpkhxlgy0/unity-links-claude) 固定在 `claude-tweak/`，并将两端共用的
 [Unity package](https://github.com/kpkhxlgy0/unity-links-unity) 固定在 `unity-package/`。本地安装成功后仍需
 保留这个 checkout；不要把它当作可以删除的临时安装包。
 
@@ -55,7 +56,8 @@ Set-Location D:\Tools\unity-links
 pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\Projects\ExampleUnityProject
 ```
 
-Codex++ 只需按 Windows 用户全局安装和注入一次；Unity package 必须对每个需要链接功能的 Unity 项目分别安装。
+每个桌面宿主只需按 Windows 用户安装一次各自的 ++ runtime 和 tweak junction；两端共用同一个 Unity
+package，并对每个需要链接功能的 Unity 项目分别安装。
 
 ### 已有仓库
 
@@ -66,12 +68,13 @@ git pull --ff-only
 git submodule update --init --recursive
 ```
 
-路径仍为 `codex-tweak/` 和 `unity-package/`，因此完成 submodule 初始化后，已有 Codex++ junction 和 Unity
-`file:` 依赖仍然有效。组件缺失时，维护脚本会打印准确的初始化命令，但不会自动获取或修改 Git 状态。
+路径仍为 `codex-tweak/`、`claude-tweak/` 和 `unity-package/`，因此完成 submodule 初始化后，已有 junction
+和 Unity `file:` 依赖仍然有效。组件缺失时，维护脚本会打印准确的初始化命令，但不会自动获取或修改 Git 状态。
 
 ### 直接安装组件
 
-Codex++ 商店用户只安装 `unity-links-codex`；Unity Package Manager 用户只安装 `unity-links-unity`。
+Codex++ 商店用户只安装 `unity-links-codex`；Claude++ 组件当前通过总仓库 junction 安装，不通过 Tweak
+Store。Unity Package Manager 用户只安装 `unity-links-unity`。
 当前稳定版带标签的 Git URL 为：
 
 ```text
@@ -96,6 +99,16 @@ pwsh -NoProfile -File .\Install-CodexPlusPlus.ps1
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
 ```
+
+Claude Code Desktop 使用 Claude++ 正式 Windows 发布包自带的 `install.ps1` 安装 Claude++，然后创建独立的
+Claude Tweak junction。下面两个命令不会安装或维护 Claude++ 本体：
+
+```powershell
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1
+```
+
+只需重启 junction 发生变化的宿主。Codex 与 Claude junction 相互独立，可以同时存在。
 
 Install 脚本不会关闭、重启或启动 Codex。如果 Install 输出 `Blocked` 和退出码 `2`，按提示手动关闭 Codex，再重新
 运行同一命令。不要提前假设需要关闭；只有 Install 确认正在运行的镜像会被修改时才需要关闭。
@@ -176,9 +189,10 @@ Unity Links 和 Unreal Links 共用同一份当前用户 Codex++ 受管镜像。
 
 移动仓库后，旧 junction 和 Unity manifest 中的相对 `file:` 路径不会自动跟随。保留旧目录，直到以下步骤都成功：
 
-1. 在新目录运行 `Inject-CodexPlusPlus.ps1`，让 tweak junction 指向新位置。
-2. 对每个受影响的 Unity 项目重新运行 `Install-UnityPackage.ps1`；不在其项目目录内时传 `-UnityProject`。
-3. 打开这些项目并等待 Unity 重新解析 package，确认无误后再删除旧目录。
+1. Codex 使用本仓库时，在新目录运行 `Inject-CodexPlusPlus.ps1`。
+2. Claude 使用本仓库时，在新目录运行 `Inject-ClaudePlusPlus.ps1`。
+3. 对每个受影响的 Unity 项目重新运行 `Install-UnityPackage.ps1`；不在其项目目录内时传 `-UnityProject`。
+4. 打开这些项目并等待 Unity 重新解析 package，确认无误后再删除旧目录。
 
 ### 只管理 Unity Links tweak junction
 
@@ -199,6 +213,18 @@ pwsh -NoProfile -File .\Uninject-CodexPlusPlus.ps1
 
 这两个 junction 命令都不会安装、修复或卸载 Codex++，不会修改启动入口、读取 `state.json` 或删除受管镜像。
 如果 live tweak 路径是一个真实目录，脚本会阻塞且不会覆盖或删除。修改 junction 后重启 Codex，tweak 才会加载或卸载。
+
+Claude 在自己的 runtime 根目录使用相同的 junction-only 流程：
+
+```powershell
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1
+pwsh -NoProfile -File .\Uninject-ClaudePlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Uninject-ClaudePlusPlus.ps1
+```
+
+这些脚本只管理 `%APPDATA%\claude-plusplus\tweaks\com.kpk.unity-asset-links`，不会调用 Claude++ 安装流程、
+控制 Claude 进程或改动 Codex junction。Claude junction 变化后重启 Claude。
 
 Unity package 的移除与 tweak junction 的移除相互独立。要移除 package，只删除目标项目 manifest 中的
 `com.kpk.codex-unity-link` 条目，然后让 Unity 重新解析。
@@ -222,6 +248,9 @@ Push-Location .\codex-tweak
 try { npm test }
 finally { Pop-Location }
 codexplusplus validate-tweak (Resolve-Path .\codex-tweak).Path
+Push-Location .\claude-tweak
+try { npm test }
+finally { Pop-Location }
 ```
 
 Unity 项目打开且 package 编译完成后，可检查该项目的 Named Pipe：
@@ -239,20 +268,21 @@ node .\codex-tweak\scripts\send-open.js `
 
 ## 发布流程
 
-组件和总入口初期使用相同稳定版本。每个 workflow 都从对应仓库的 GitHub Actions 页面运行。从 `0.2.0`
-开始：
+三个组件与总入口使用独立稳定版本。每个 workflow 都从对应仓库的 GitHub Actions 页面运行。总入口
+`v0.3.0` 的发布顺序为：
 
-1. 验证并发布 `unity-links-unity` 的 `v0.2.2`。
+1. 验证并发布 `unity-links-unity` 的 `v0.2.4`。
 2. 验证并发布 `unity-links-codex` 的 `v0.2.2`。
-3. 将本仓库的两个 submodule 指针更新到上述已发布 commit。
-4. 运行总入口集成测试和三类 Unity 链接 smoke check。
-5. 从 `master` 运行本仓库的 `Release` workflow，输入 `0.2.2`。
-6. 检查并手动发布生成的总入口 Draft Release。
-7. 使用已发布的 Codex 组件 commit 提交 Codex++ Tweak Store 审核。
+3. 验证并发布 `unity-links-claude` 的 `v0.1.2`。
+4. 将本仓库的三个 submodule 指针更新到上述已发布 commit。
+5. 运行总入口集成测试，并从两个桌面宿主执行 Unity 链接 smoke check。
+6. 从 `master` 运行本仓库的 `Release` workflow，输入 `0.3.0`。
+7. 检查并手动发布生成的总入口 Draft Release。
+8. 只使用已发布的 Codex 组件 commit 提交 Codex++ Tweak Store 审核；Claude 组件继续使用 junction 安装。
 
 不要移动或复用发布标签。工作流重试时，如果所需标签已指向同一提交，可以继续使用；标签指向其他提交时会失败。
-总入口 workflow 还要求两个 submodule 都指向匹配的组件标签。Codex++ 的更新检查只提供提示，并且只能看到
-已经发布的 Releases，因此 Draft Release 不会向用户提示更新。
+总入口 workflow 会读取每个组件自己的版本，并要求三个 submodule 都指向各自匹配的组件标签。更新检查只提供提示，
+并且只能看到已经发布的 Releases，因此 Draft Release 不会向用户提示更新。
 
 ## 安全边界与退出码
 

@@ -53,6 +53,10 @@ jobs:
         shell: pwsh
         run: node --test ./codex-tweak/test/index.test.js
 
+      - name: Run Claude tweak tests
+        shell: pwsh
+        run: npm test --prefix ./claude-tweak
+
       - name: Run release validator tests
         shell: pwsh
         run: node --test ./scripts/release/validate-release.test.mjs
@@ -83,25 +87,53 @@ jobs:
           node .\.release-tools\codex-plusplus\packages\installer\dist\cli.js `
             validate-tweak (Resolve-Path .\codex-tweak).Path
 
+      - name: Check out pinned Claude++
+        uses: actions/checkout@v6
+        with:
+          repository: kpkhxlgy0/ClaudePlusPlus
+          ref: 9d4522e0bb5effd3722cca8a488bf0955e06ed0a
+          path: .release-tools/claude-plusplus
+          persist-credentials: false
+
+      - name: Build Claude++ SDK and Runtime
+        shell: pwsh
+        working-directory: .release-tools/claude-plusplus
+        run: |
+          npm ci --ignore-scripts
+          npm run build --workspace @claude-plusplus/sdk
+          npm run build --workspace @claude-plusplus/runtime
+
+      - name: Validate tweak with Claude++
+        shell: pwsh
+        run: |
+          node --import ./.release-tools/claude-plusplus/node_modules/tsx/dist/loader.mjs `
+            ./claude-tweak/scripts/compatibility/validate-claudeplusplus.mjs `
+            ./.release-tools/claude-plusplus ./claude-tweak
+
       - name: Verify component release tags
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          $tag = "v$env:RELEASE_VERSION"
-          foreach ($component in @("codex-tweak", "unity-package"))
+          $components = @(
+              @{ Path = "codex-tweak"; Version = (Get-Content codex-tweak/manifest.json -Raw | ConvertFrom-Json).version },
+              @{ Path = "claude-tweak"; Version = (Get-Content claude-tweak/manifest.json -Raw | ConvertFrom-Json).version },
+              @{ Path = "unity-package"; Version = (Get-Content unity-package/package.json -Raw | ConvertFrom-Json).version })
+          foreach ($component in $components)
           {
-              git -C $component fetch --tags origin
-              $existing = git -C $component tag --list $tag
+              $path = $component.Path
+              $tag = "v$($component.Version)"
+              git -C $path fetch --tags origin
+              $existing = git -C $path tag --list $tag
               if (!$existing)
               {
-                  throw "$component does not have $tag."
+                  throw "$path does not have $tag."
               }
-              $head = (git -C $component rev-parse HEAD).Trim()
-              $tagCommit = (git -C $component rev-list -n 1 $tag).Trim()
+              $head = (git -C $path rev-parse HEAD).Trim()
+              $tagCommit = (git -C $path rev-list -n 1 $tag).Trim()
               if ($head -ne $tagCommit)
               {
-                  throw "$component is pinned at $head instead of $tagCommit for $tag."
+                  throw "$path is pinned at $head instead of $tagCommit for $tag."
               }
           }
 

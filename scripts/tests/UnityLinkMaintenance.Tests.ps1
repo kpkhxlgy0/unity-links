@@ -99,6 +99,7 @@ Test-Case "maintainer checks stay project-neutral and avoid temporary Unity proj
     $legacyLayout = "File" + "Packages"
     $files = @(
         (Join-Path $repositoryRoot "codex-tweak/test/index.test.js"),
+        (Join-Path $repositoryRoot "claude-tweak/test/index.test.js"),
         (Join-Path $repositoryRoot "scripts/tests/UnityLinkMaintenance.Tests.ps1"),
         (Join-Path $repositoryRoot ".github/workflows/release.yml"),
         (Join-Path $repositoryRoot "scripts/release/validate-release.mjs"),
@@ -154,11 +155,19 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
         "-UnityProject")
     $requiredEnglishText = @(
         "[简体中文](README.zh-CN.md)",
+        "Claude++",
+        "claude-tweak",
+        "Inject-ClaudePlusPlus.ps1",
+        "Uninject-ClaudePlusPlus.ps1",
         "Start menu",
         "Moving the Repository",
         "wait for package compilation to finish")
     $requiredChineseText = @(
         "[English](README.md)",
+        "Claude++",
+        "claude-tweak",
+        "Inject-ClaudePlusPlus.ps1",
+        "Uninject-ClaudePlusPlus.ps1",
         "开始菜单",
         "移动仓库",
         "等待 Unity 完成 package 编译")
@@ -181,6 +190,10 @@ Test-Case "MIT license and bilingual release documentation are complete" {
         ConvertFrom-Json
     $tweakPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "codex-tweak/package.json") -Raw |
         ConvertFrom-Json
+    $claudeManifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "claude-tweak/manifest.json") -Raw |
+        ConvertFrom-Json
+    $claudePackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "claude-tweak/package.json") -Raw |
+        ConvertFrom-Json
     $unityPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot "unity-package/package.json") -Raw |
         ConvertFrom-Json
     $englishReadme = Get-Content -LiteralPath (Join-Path $repositoryRoot "README.md") -Raw
@@ -189,10 +202,19 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     Assert-True ($license.Contains("MIT License"))
     Assert-True ($license.Contains("Copyright (c) 2026 KPK"))
     Assert-Equal "MIT" $tweakPackage.license
+    Assert-Equal "MIT" $claudePackage.license
     Assert-Equal "MIT" $unityPackage.license
     Assert-Equal "kpkhxlgy0/unity-links-codex" $tweakManifest.githubRepo
     Assert-Equal "0.2.2" $tweakManifest.version
     Assert-Equal "0.2.2" $tweakPackage.version
+    Assert-Equal "kpkhxlgy0/unity-links-claude" $claudeManifest.githubRepo
+    Assert-Equal "0.1.2" $claudeManifest.version
+    Assert-Equal "0.1.2" $claudePackage.version
+    Assert-Equal "0.2.2" $claudeManifest.minRuntime
+    Assert-Equal "both" $claudeManifest.scope
+    Assert-Equal "index.js" $claudeManifest.main
+    Assert-Equal '["ipc","filesystem","claude-sessions"]' `
+        ($claudeManifest.permissions | ConvertTo-Json -Compress)
     Assert-Equal "0.2.4" $unityPackage.version
     Assert-Equal "https://github.com/kpkhxlgy0/unity-links-unity/blob/master/LICENSE" `
         $unityPackage.licensesUrl
@@ -245,8 +267,14 @@ Test-Case "release workflow is manual guarded and draft-only" {
         "scripts/release/validate-release.mjs",
         "scripts/tests/Run-Tests.ps1",
         "codex-tweak/test/index.test.js",
-        'foreach ($component in @("codex-tweak", "unity-package"))',
-        'git -C $component fetch --tags origin',
+        "npm test --prefix ./claude-tweak",
+        "scripts/compatibility/validate-claudeplusplus.mjs",
+        "9d4522e0bb5effd3722cca8a488bf0955e06ed0a",
+        "npm run build --workspace @claude-plusplus/runtime",
+        '@{ Path = "codex-tweak"; Version =',
+        '@{ Path = "claude-tweak"; Version =',
+        '@{ Path = "unity-package"; Version =',
+        'git -C $path fetch --tags origin',
         "scripts/release/validate-release.test.mjs",
         "f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7",
         "npm run build --workspace codex-plusplus",

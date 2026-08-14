@@ -18,12 +18,22 @@ function fixtureRoot() {
   fixtureRoots.push(root);
   writeFileSync(join(root, "LICENSE"), "MIT License\n\nCopyright (c) 2026 KPK\n");
   writeJson(root, "codex-tweak/manifest.json", {
-    version: "0.1.0",
+    version: "0.2.2",
     githubRepo: "kpkhxlgy0/unity-links-codex",
   });
-  writeJson(root, "codex-tweak/package.json", { version: "0.1.0", license: "MIT" });
+  writeJson(root, "codex-tweak/package.json", { version: "0.2.2", license: "MIT" });
+  writeJson(root, "claude-tweak/manifest.json", {
+    id: "com.kpk.unity-asset-links",
+    version: "0.1.2",
+    githubRepo: "kpkhxlgy0/unity-links-claude",
+    minRuntime: "0.2.2",
+    scope: "both",
+    main: "index.js",
+    permissions: ["ipc", "filesystem", "claude-sessions"],
+  });
+  writeJson(root, "claude-tweak/package.json", { version: "0.1.2", license: "MIT" });
   writeJson(root, "unity-package/package.json", {
-    version: "0.1.0",
+    version: "0.2.4",
     license: "MIT",
     licensesUrl: "https://github.com/kpkhxlgy0/unity-links-unity/blob/master/LICENSE",
   });
@@ -32,6 +42,9 @@ function fixtureRoot() {
     '[submodule "codex-tweak"]\n' +
       "\tpath = codex-tweak\n" +
       "\turl = git@github.com:kpkhxlgy0/unity-links-codex.git\n" +
+      '[submodule "claude-tweak"]\n' +
+      "\tpath = claude-tweak\n" +
+      "\turl = git@github.com:kpkhxlgy0/unity-links-claude.git\n" +
       '[submodule "unity-package"]\n' +
       "\tpath = unity-package\n" +
       "\turl = git@github.com:kpkhxlgy0/unity-links-unity.git\n",
@@ -50,34 +63,74 @@ afterEach(() => {
 });
 
 test("accepts a valid stable release", () => {
-  assert.deepEqual(validateRelease(fixtureRoot(), "0.1.0"), {
-    version: "0.1.0",
-    tag: "v0.1.0",
+  assert.deepEqual(validateRelease(fixtureRoot(), "0.3.0"), {
+    version: "0.3.0",
+    tag: "v0.3.0",
+    componentVersions: {
+      codexTweak: "0.2.2",
+      claudeTweak: "0.1.2",
+      unityPackage: "0.2.4",
+    },
   });
 });
 
 test("rejects non-stable versions", () => {
-  for (const version of ["v0.1.0", "0.1", "0.1.0-beta.1", "latest"]) {
+  for (const version of ["v0.3.0", "0.3", "0.3.0-beta.1", "latest"]) {
     assert.throws(() => validateRelease(fixtureRoot(), version), /stable MAJOR\.MINOR\.PATCH/);
   }
 });
 
-test("rejects every package version mismatch", () => {
-  for (const relativePath of [
-    "codex-tweak/manifest.json",
-    "codex-tweak/package.json",
-    "unity-package/package.json",
+test("keeps each component version independent from the umbrella version", () => {
+  assert.doesNotThrow(() => validateRelease(fixtureRoot(), "0.3.0"));
+});
+
+test("rejects mismatched Tweak manifest and package versions", () => {
+  for (const [relativePath, version] of [
+    ["codex-tweak/package.json", "0.2.1"],
+    ["claude-tweak/package.json", "0.1.0"],
   ]) {
     const root = fixtureRoot();
-    updateJson(root, relativePath, { version: "0.1.1" });
-    assert.throws(() => validateRelease(root, "0.1.0"), new RegExp(relativePath.replaceAll("/", "[/\\\\]")));
+    updateJson(root, relativePath, { version });
+    assert.throws(() => validateRelease(root, "0.3.0"), new RegExp(relativePath.replaceAll("/", "[/\\\\]")));
   }
 });
 
-test("rejects a mismatched GitHub repository", () => {
-  const root = fixtureRoot();
-  updateJson(root, "codex-tweak/manifest.json", { githubRepo: "example/unity-links" });
-  assert.throws(() => validateRelease(root, "0.1.0"), /kpkhxlgy0\/unity-links-codex/);
+test("rejects non-stable component versions", () => {
+  for (const relativePath of [
+    "codex-tweak/manifest.json",
+    "codex-tweak/package.json",
+    "claude-tweak/manifest.json",
+    "claude-tweak/package.json",
+    "unity-package/package.json",
+  ]) {
+    const root = fixtureRoot();
+    updateJson(root, relativePath, { version: "next" });
+    assert.throws(() => validateRelease(root, "0.3.0"), new RegExp(relativePath.replaceAll("/", "[/\\\\]")));
+  }
+});
+
+test("rejects mismatched component repositories", () => {
+  const wrongCodex = fixtureRoot();
+  updateJson(wrongCodex, "codex-tweak/manifest.json", { githubRepo: "example/unity-links" });
+  assert.throws(() => validateRelease(wrongCodex, "0.3.0"), /kpkhxlgy0\/unity-links-codex/);
+
+  const wrongClaude = fixtureRoot();
+  updateJson(wrongClaude, "claude-tweak/manifest.json", { githubRepo: "example/unity-links" });
+  assert.throws(() => validateRelease(wrongClaude, "0.3.0"), /kpkhxlgy0\/unity-links-claude/);
+});
+
+test("rejects a Claude Tweak that drifts from the Claude++ contract", () => {
+  for (const [patch, expected] of [
+    [{ id: "example.wrong" }, /com\.kpk\.unity-asset-links/],
+    [{ minRuntime: "0.2.1" }, /minRuntime/],
+    [{ scope: "renderer" }, /scope/],
+    [{ main: "other.js" }, /main/],
+    [{ permissions: ["ipc"] }, /permissions/],
+  ]) {
+    const root = fixtureRoot();
+    updateJson(root, "claude-tweak/manifest.json", patch);
+    assert.throws(() => validateRelease(root, "0.3.0"), expected);
+  }
 });
 
 test("rejects incorrect component repository metadata", () => {
@@ -85,29 +138,33 @@ test("rejects incorrect component repository metadata", () => {
   updateJson(wrongLicenseUrl, "unity-package/package.json", {
     licensesUrl: "https://github.com/kpkhxlgy0/unity-links/blob/master/LICENSE",
   });
-  assert.throws(() => validateRelease(wrongLicenseUrl, "0.1.0"), /unity-links-unity/);
+  assert.throws(() => validateRelease(wrongLicenseUrl, "0.3.0"), /unity-links-unity/);
 
   const missingGitmodules = fixtureRoot();
   rmSync(join(missingGitmodules, ".gitmodules"));
-  assert.throws(() => validateRelease(missingGitmodules, "0.1.0"), /\.gitmodules/);
+  assert.throws(() => validateRelease(missingGitmodules, "0.3.0"), /\.gitmodules/);
 
   const wrongGitmodules = fixtureRoot();
   writeFileSync(join(wrongGitmodules, ".gitmodules"), '[submodule "wrong"]\n\tpath = wrong\n');
-  assert.throws(() => validateRelease(wrongGitmodules, "0.1.0"), /unity-links-codex\.git/);
+  assert.throws(() => validateRelease(wrongGitmodules, "0.3.0"), /unity-links-codex\.git/);
 });
 
 test("rejects missing or incorrect MIT metadata", () => {
   const missingLicense = fixtureRoot();
   rmSync(join(missingLicense, "LICENSE"));
-  assert.throws(() => validateRelease(missingLicense, "0.1.0"), /LICENSE/);
+  assert.throws(() => validateRelease(missingLicense, "0.3.0"), /LICENSE/);
 
   const wrongCopyright = fixtureRoot();
   writeFileSync(join(wrongCopyright, "LICENSE"), "MIT License\nCopyright (c) 2026 Someone Else\n");
-  assert.throws(() => validateRelease(wrongCopyright, "0.1.0"), /Copyright \(c\) 2026 KPK/);
+  assert.throws(() => validateRelease(wrongCopyright, "0.3.0"), /Copyright \(c\) 2026 KPK/);
 
-  for (const relativePath of ["codex-tweak/package.json", "unity-package/package.json"]) {
+  for (const relativePath of [
+    "codex-tweak/package.json",
+    "claude-tweak/package.json",
+    "unity-package/package.json",
+  ]) {
     const root = fixtureRoot();
     updateJson(root, relativePath, { license: "Apache-2.0" });
-    assert.throws(() => validateRelease(root, "0.1.0"), /license must be MIT/);
+    assert.throws(() => validateRelease(root, "0.3.0"), /license must be MIT/);
   }
 });

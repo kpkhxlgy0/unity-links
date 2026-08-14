@@ -1,11 +1,11 @@
-# Codex++ Unity Asset Link Design
+# Codex++ / Claude++ Unity Asset Link Design
 
 Date: 2026-07-24
-Updated: 2026-07-25
+Updated: 2026-08-14
 
 ## Objective
 
-When a user normally clicks a local file link in a Codex Desktop reply, route existing files under a Unity project's
+When a user normally clicks a local file link in a Codex Desktop or Claude Code Desktop reply, route existing files under a Unity project's
 `Assets`, `ProjectSettings`, or `Packages` directory through that project's running Unity Editor. `Assets` files use
 `AssetDatabase.OpenAsset`, `ProjectSettings` files open the Project Settings window, and `Packages` files open the
 Package Manager window.
@@ -23,16 +23,16 @@ small, local-only, and independent from any particular Unity repository.
 - Unity opens Package Manager for `Packages` files. For `Packages/<package-id>/**`, it passes `<package-id>` as the
   package to select; root files such as `manifest.json` and `packages-lock.json` open the unfiltered window.
 - Multiple open Unity projects route requests independently by canonical project root.
-- If the matching Unity Editor is unavailable, Codex locates the file in Explorer and shows a short explanation.
+- If the matching Unity Editor is unavailable, the active Desktop host locates the file in Explorer and shows a short explanation.
 - Links outside the three supported directories, directory links, modified clicks, and links that cannot be resolved
-  retain Codex's existing behavior wherever possible.
-- The Codex++ tweak validates successfully and has no third-party runtime dependencies.
+  retain the host's existing behavior wherever possible.
+- Both the Codex++ and Claude++ Tweaks validate successfully and have no third-party runtime dependencies.
 - The Unity receiver is Editor-only and does not enter player builds.
 
 ## Chosen Approach
 
-Use a Codex++ tweak with `scope: "both"` and a local Unity Package Manager package connected by a per-project Windows
-Named Pipe.
+Use separate Codex++ and Claude++ Tweaks with `scope: "both"` and one shared local Unity Package Manager package,
+connected by a per-project Windows Named Pipe.
 
 This was selected over localhost HTTP because it avoids port discovery, firewall behavior, and network exposure. It
 was selected over a polled file queue because it provides immediate responses and has no stale command files.
@@ -45,34 +45,37 @@ was selected over a polled file queue because it provides immediate responses an
   docs\
     design.md
   codex-tweak\       Git submodule -> kpkhxlgy0/unity-links-codex
+  claude-tweak\      Git submodule -> kpkhxlgy0/unity-links-claude
   unity-package\     Git submodule -> kpkhxlgy0/unity-links-unity
 ```
 
-`kpkhxlgy0/unity-links-codex` is authoritative for the Codex++ tweak, manifest, store icon, unit tests, and component
-release. `kpkhxlgy0/unity-links-unity` is authoritative for the Editor receiver, UPM metadata, and component release.
-The umbrella repository owns the shared protocol description, Windows maintenance scripts, integration tests, and the
-exact compatible pair through pinned Git submodule commits.
-Both gitlinks use GitHub SSH URLs (`git@github.com:kpkhxlgy0/unity-links-codex.git` and
-`git@github.com:kpkhxlgy0/unity-links-unity.git`) so maintainers use the same authenticated transport for fetch and
-push.
+`kpkhxlgy0/unity-links-codex` is authoritative for the Codex++ Tweak. `kpkhxlgy0/unity-links-claude` is authoritative
+for the Claude++ Tweak and its Claude Sessions compatibility checks. `kpkhxlgy0/unity-links-unity` is authoritative
+for the Editor receiver and UPM metadata. The umbrella repository owns the shared protocol description, Windows
+maintenance scripts, integration tests, and the exact compatible component set through pinned Git submodule commits.
+All three gitlinks use GitHub SSH URLs so maintainers use the same authenticated transport for fetch and push.
 
 The Unity project can consume `unity-package` through the umbrella's local `file:` path or directly from a tagged
-component Git URL. The Codex++ live tweaks directory contains a development link to `codex-tweak`; it is not the source
-of truth. Existing local paths remain stable after the split because the two component directory names do not change.
+component Git URL. Each ++ runtime's live Tweaks directory contains a junction to its matching Tweak submodule; it is
+not the source of truth. Existing local paths remain stable because component directory names do not change.
 
 ## Components
 
-### Renderer Tweak
+### Renderer Tweaks
 
-The renderer half installs one capture-phase click listener on `document` and removes it in `stop()`.
+Each renderer half installs one capture-phase click listener on `document` and removes it in `stop()`.
 
 It considers only an unmodified primary-button click whose nearest element is a local file anchor. It parses the
 anchor destination into a candidate absolute Windows path plus optional one-based line and column. Supported forms
-include Windows absolute paths, slash-prefixed Windows paths emitted by Markdown renderers, and `file:` URLs. The
-renderer intercepts the click only when the parsed path contains an `Assets`, `ProjectSettings`, or `Packages` path
-segment; all other paths retain the existing Codex behavior without an asynchronous round trip.
+include Windows absolute paths, slash-prefixed Windows paths emitted by Markdown renderers, and `file:` URLs. Claude
+can additionally render a native relative code reference; its Tweak uses the permission-scoped Claude Sessions adapter
+to resolve that reference against the current session and falls back to a unique file below the session's Unity
+workspace. Ambiguous or unresolved references replay Claude's native behavior.
 
-The renderer sends the candidate to the tweak's main half through namespaced Codex++ IPC. It prevents Codex's default
+The renderer intercepts the click only when the resolved path belongs below `Assets`, `ProjectSettings`, or `Packages`;
+all other paths retain the active host's behavior without a trusted filesystem open.
+
+The renderer sends the candidate to the Tweak's main half through the host runtime's namespaced IPC. It prevents the host's default
 navigation only after the candidate is recognized as a local absolute file path. The main response determines whether
 to show a transient success-independent error/fallback notification. Normal successful opens do not show a toast.
 
@@ -93,7 +96,7 @@ The main half performs all trusted filesystem and transport work:
 5. Derive the project Pipe name from a stable hash of the case-normalized canonical project root.
 6. Send one request and wait for a bounded response.
 
-The main half uses Node and Electron facilities already present in the Codex++ main process. It does not launch a
+The main half uses Node and Electron facilities already present in the selected ++ runtime's main process. It does not launch a
 helper executable. On connection failure it calls Electron's file-reveal facility and returns a fallback result to
 the renderer.
 
@@ -172,14 +175,14 @@ so a digest collision or incorrectly routed request cannot cross projects.
 ## Error Handling
 
 - Unity unavailable: use a short connection timeout (target 300 ms), reveal the existing file in Explorer, and show a
-  transient Codex notification.
+  transient host notification.
 - File missing: do not send a request; show a concise notification. If a containing directory still exists, reveal it.
-- Malformed or unsupported project link: leave the link to Codex's existing behavior.
+- Malformed or unsupported project link: leave the link to the active host's existing behavior.
 - Unity rejects a request during validation: return a structured response, reveal the file, and show the response
   message. If opening fails after `accepted`, log the failure in the Unity Console without triggering a second
   Explorer action.
 - Domain reload during a request: the bounded timeout takes the same fallback path; the receiver returns after reload.
-- Logging: failures and lifecycle events go to the Codex++ tweak log or Unity Console. Successful opens do not log by
+- Logging: failures and lifecycle events go to the host Tweak log or Unity Console. Successful opens do not log by
   default.
 
 ## Security Boundaries
@@ -205,6 +208,11 @@ requires a syntactically valid `githubRepo` even for a local development tweak, 
 `kpkhxlgy0/unity-links`. Starting with the split `0.2.0` component, `githubRepo` is
 `kpkhxlgy0/unity-links-codex`. A failed advisory release lookup must not affect loading or link handling.
 
+The Claude++ Tweak uses the same id, `scope: "both"`, and shared Pipe protocol. Version `0.1.2` requires Claude++
+`0.2.2` and declares `permissions: ["ipc", "filesystem", "claude-sessions"]`. The `claude-sessions` permission is
+used only to resolve the active session's native file reference and workspace root; Main filesystem and Pipe access
+remain behind the Tweak's existing validation boundary.
+
 ## Verification
 
 The implementation phase will use:
@@ -212,6 +220,7 @@ The implementation phase will use:
 - Node's built-in test runner for destination parsing, line/column parsing, click eligibility, project-root detection,
   supported-file containment, and deterministic Pipe names.
 - `codexplusplus validate-tweak` for manifest and entry validation.
+- The Claude Tweak compatibility harness against the pinned Claude++ SDK and Runtime.
 - A direct protocol client check for success, timeout, malformed request, wrong-project, and unsupported-path
   responses.
 - Unity refresh/compile and Console inspection after adding the local package to a project.
@@ -229,10 +238,13 @@ Installation and maintenance consists of:
    modifies a tweak junction and never reloads tweaks.
 2. After the first Install, use `Inject-CodexPlusPlus.ps1` to maintain only the exact `codex-tweak` junction below
    `%APPDATA%\codex-plusplus\tweaks`. Use `Uninject-CodexPlusPlus.ps1` to inspect or remove only that junction.
-3. Use `Install-UnityPackage.ps1` once per Unity project to add `com.kpk.codex-unity-link` through a portable relative
+3. Install Claude++ through its own release `install.ps1`; use `Inject-ClaudePlusPlus.ps1` and
+   `Uninject-ClaudePlusPlus.ps1` only for the exact `claude-tweak` junction below `%APPDATA%\claude-plusplus\tweaks`.
+   These scripts do not install Claude++, control Claude processes, or modify the Codex junction.
+4. Use `Install-UnityPackage.ps1` once per Unity project to add `com.kpk.codex-unity-link` through a portable relative
    `file:` dependency. A repository inside the project is found by walking upward; an external repository requires
    `-UnityProject`.
-4. Let Unity compile the Editor-only package, then manually restart Codex after Inject changes the junction.
+5. Let Unity compile the Editor-only package, then manually restart only the Desktop host whose junction changed.
 
 The scripts derive their source paths from their own repository location and do not depend on a fixed checkout path.
 Because both the tweak junction and Unity package dependency reference this repository, moving it requires rerunning
@@ -251,7 +263,7 @@ failed direct mirror repair never falls back to the official Appx in the same ru
 proceed while the current patched mirror runs when the initial process query succeeded. The watcher remains disabled.
 Tweak junction injection is a separate command and its state never affects Install maintenance or blocking.
 
-## Explicit Non-Goals for Version 0.1.0
+## Explicit Non-Goals
 
 - Starting, installing, or selecting a Unity Editor version.
 - Opening directories, files from other project-root directories, or files outside the Unity project.
