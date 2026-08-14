@@ -28,7 +28,10 @@ function Get-TweakLinkState
     $targetProperty = $item.PSObject.Properties["Target"]
     if (!$isReparsePoint -or
         $null -eq $linkTypeProperty -or
-        !$linkTypeProperty.Value -or
+        ![string]::Equals(
+            [string] $linkTypeProperty.Value,
+            "Junction",
+            [System.StringComparison]::OrdinalIgnoreCase) -or
         $null -eq $targetProperty -or
         @($targetProperty.Value).Count -eq 0)
     {
@@ -75,7 +78,7 @@ function Set-TweakJunction
     if ($state.Status -eq "Current") { return $false }
     if ($state.Status -eq "Unsafe")
     {
-        throw "The live tweak path is a real directory and will not be replaced: $LinkPath"
+        throw "The live tweak path is a real directory or unsupported reparse point and will not be replaced: $LinkPath"
     }
 
     $parent = Split-Path (Resolve-NormalizedPath $LinkPath) -Parent
@@ -120,9 +123,14 @@ function Remove-TweakLink
     if ($null -eq $item) { return $false }
     $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
     $linkTypeProperty = $item.PSObject.Properties["LinkType"]
-    if (!$isReparsePoint -or $null -eq $linkTypeProperty -or !$linkTypeProperty.Value)
+    if (!$isReparsePoint -or
+        $null -eq $linkTypeProperty -or
+        ![string]::Equals(
+            [string] $linkTypeProperty.Value,
+            "Junction",
+            [System.StringComparison]::OrdinalIgnoreCase))
     {
-        throw "The live tweak path is a real directory and will not be removed: $path"
+        throw "The live tweak path is a real directory or unsupported reparse point and will not be removed: $path"
     }
 
     Remove-Item -LiteralPath $path -Force

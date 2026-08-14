@@ -97,7 +97,9 @@ Test-Case "public entry points reject Windows PowerShell below version 7 before 
         "Install-UnityPackage.ps1",
         "Install-CodexPlusPlus.ps1",
         "Inject-CodexPlusPlus.ps1",
-        "Uninject-CodexPlusPlus.ps1")
+        "Uninject-CodexPlusPlus.ps1",
+        "Inject-ClaudePlusPlus.ps1",
+        "Uninject-ClaudePlusPlus.ps1")
 
     foreach ($entryPointName in $entryPoints)
     {
@@ -108,6 +110,23 @@ Test-Case "public entry points reject Windows PowerShell below version 7 before 
         Assert-True ($exitCode -ne 0) "$entryPointName unexpectedly ran under Windows PowerShell 5.1."
         Assert-True ($output -match "#requires") `
             "$entryPointName did not fail through its PowerShell version requirement.`n$output"
+    }
+}
+
+Test-Case "Claude++ entry points only manage their Tweak junction" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    foreach ($entryPointName in @("Inject-ClaudePlusPlus.ps1", "Uninject-ClaudePlusPlus.ps1"))
+    {
+        $entryPoint = Join-Path $repositoryRoot $entryPointName
+        $text = Get-Content -LiteralPath $entryPoint -Raw
+
+        Assert-True ($text.Contains('claude-plusplus/tweaks/com.kpk.unity-asset-links'))
+        Assert-True ($text.Contains('CodexTweakLink.psm1'))
+        Assert-True (!$text.Contains('CodexPlusPlusMaintenance.psm1'))
+        Assert-True (!$text.Contains('Start-Process'))
+        Assert-True (!$text.Contains('Stop-Process'))
+        Assert-True (!$text.Contains('Get-AppxPackage'))
+        Assert-True (!$text.Contains('Registry'))
     }
 }
 
