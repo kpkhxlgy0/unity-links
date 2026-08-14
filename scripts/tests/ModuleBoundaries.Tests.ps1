@@ -40,6 +40,8 @@ Test-Case "focused maintenance modules import independently and isolate domain A
     Assert-True (!$modules.CodexPlusPlusMaintenance.ExportedFunctions.ContainsKey("Get-TweakLinkState"))
 
     $layout = UnityLinkCommon\Get-UnityLinkRepositoryLayout -RepositoryRoot "D:\Tools\unity-links"
+    Assert-Equal "D:\Tools\unity-links\claude-tweak" $layout.ClaudeTweakRoot
+    Assert-Equal "D:\Tools\unity-links\claude-tweak\manifest.json" $layout.ClaudeTweakManifest
     Assert-Equal "D:\Tools\unity-links\unity-package" $layout.PackageRoot
 
     $dependency = UnityPackageMaintenance\Get-UnityPackageManifestValue `

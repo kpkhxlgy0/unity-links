@@ -42,6 +42,8 @@ function Get-UnityLinkRepositoryLayout
         RepositoryRoot = $root
         TweakRoot = Join-Path $root "codex-tweak"
         TweakManifest = Join-Path $root "codex-tweak/manifest.json"
+        ClaudeTweakRoot = Join-Path $root "claude-tweak"
+        ClaudeTweakManifest = Join-Path $root "claude-tweak/manifest.json"
         PackageRoot = Join-Path $root "unity-package"
         PackageManifest = Join-Path $root "unity-package/package.json"
     }
@@ -53,13 +55,14 @@ function Assert-UnityLinkComponentInitialized
     param(
         [Parameter(Mandatory)] [object] $Layout,
         [Parameter(Mandatory)]
-        [ValidateSet("CodexTweak", "UnityPackage")]
+        [ValidateSet("CodexTweak", "ClaudeTweak", "UnityPackage")]
         [string] $Component)
 
-    $manifest = if ($Component -eq "CodexTweak") {
-        $Layout.TweakManifest
-    } else {
-        $Layout.PackageManifest
+    $manifest = switch ($Component)
+    {
+        "CodexTweak" { $Layout.TweakManifest }
+        "ClaudeTweak" { $Layout.ClaudeTweakManifest }
+        "UnityPackage" { $Layout.PackageManifest }
     }
     if (Test-Path -LiteralPath $manifest -PathType Leaf) { return }
 
