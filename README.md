@@ -2,7 +2,7 @@
 
 # Unity Asset Links
 
-Open local file links from Codex Desktop responses in the matching Unity Editor when they point into a Unity project's
+Open local file links from Codex Desktop or Claude Code Desktop responses in the matching Unity Editor when they point into a Unity project's
 `Assets`, `ProjectSettings`, or `Packages` directory. `Assets` links use Unity's normal asset-opening behavior,
 `ProjectSettings` links open Project Settings, and `Packages` links open Package Manager. Code links preserve line and
 column information.
@@ -10,11 +10,12 @@ column information.
 ## Prerequisites
 
 - Windows 10/11.
-- The official Codex Desktop app installed for the current Windows user.
+- The official Codex Desktop app, Claude Code Desktop, or both installed for the current Windows user.
 - A Unity 2022.3 project.
 - PowerShell 7, available as `pwsh`.
 - Git, used to clone this repository.
-- Node.js 20 or newer and npm, used during the first installation of Codex++ 1.0.0.
+- Node.js 20 or newer and npm, used only during the first installation of Codex++ 1.0.0. Claude++ end users do not
+  need Node.js.
 - Internet access when cloning the repository and installing Codex++ for the first time.
 
 Run all PowerShell commands from the repository root. The scripts resolve files through `$PSScriptRoot` and do not
@@ -24,6 +25,7 @@ depend on a fixed drive letter or project name.
 
 This repository is the integration and installation entry point. It pins the independently published
 [Codex++ tweak](https://github.com/kpkhxlgy0/unity-links-codex) at `codex-tweak/` and
+[Claude++ tweak](https://github.com/kpkhxlgy0/unity-links-claude) at `claude-tweak/`, plus the shared
 [Unity package](https://github.com/kpkhxlgy0/unity-links-unity) at `unity-package/` through Git submodules. Keep the
 checkout after local installation; do not treat it as a temporary installer that can be deleted.
 
@@ -60,8 +62,8 @@ Set-Location D:\Tools\unity-links
 pwsh -NoProfile -File .\Install-UnityPackage.ps1 -UnityProject D:\Projects\ExampleUnityProject
 ```
 
-Codex++ only needs to be installed and injected once per Windows user. Install the Unity package separately in every
-Unity project that needs link handling.
+Each Desktop host only needs its own ++ runtime and tweak junction once per Windows user. Both hosts share the same
+Unity package, installed separately in every Unity project that needs link handling.
 
 ### Existing Clones
 
@@ -72,21 +74,22 @@ git pull --ff-only
 git submodule update --init --recursive
 ```
 
-The paths remain `codex-tweak/` and `unity-package/`, so existing Codex++ junctions and Unity `file:` dependencies stay
-valid after submodule initialization. Maintenance scripts report the exact initialization command when a component is
-missing; they never fetch or modify Git state automatically.
+The paths remain `codex-tweak/`, `claude-tweak/`, and `unity-package/`, so existing junctions and Unity `file:`
+dependencies stay valid after submodule initialization. Maintenance scripts report the exact initialization command
+when a component is missing; they never fetch or modify Git state automatically.
 
 ### Direct Component Installation
 
-Codex++ Store users install only `unity-links-codex`. Unity Package Manager users install only
-`unity-links-unity`; the current stable tagged Git URL is:
+Codex++ Store users install only `unity-links-codex`. The Claude++ component is currently installed through the
+umbrella junction rather than the Tweak Store. Unity Package Manager users install only `unity-links-unity`; the
+current stable tagged Git URL is:
 
 ```text
 https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.4
 ```
 
 Use this umbrella checkout when you need the coordinated Windows installer, local `file:` dependency, integration
-tests, or development against the exact component pair.
+tests, or development against the exact component set.
 
 ## First-Time Setup
 
@@ -106,6 +109,16 @@ After Install succeeds on first use, create the Unity Links tweak junction separ
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1 -CheckOnly
 pwsh -NoProfile -File .\Inject-CodexPlusPlus.ps1
 ```
+
+For Claude Code Desktop, install Claude++ from its official Windows release with the bundled `install.ps1`, then
+create the separate Claude Tweak junction. These commands do not install or maintain Claude++ itself:
+
+```powershell
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1
+```
+
+Restart only the host whose junction changed. Codex and Claude junctions are independent and can coexist.
 
 The Install script does not close, restart, or launch Codex. If Install prints `Blocked` and exits with code `2`,
 manually close Codex as instructed and run the same command again. Do not assume in advance that Codex must be closed;
@@ -196,10 +209,11 @@ observe the same safety checks.
 After moving the repository, the old junction and relative `file:` paths in Unity manifests do not update
 automatically. Keep the old directory until all of these steps succeed:
 
-1. Run `Inject-CodexPlusPlus.ps1` from the new directory so the tweak junction points to the new location.
-2. Run `Install-UnityPackage.ps1` again for every affected Unity project; pass `-UnityProject` when the repository is
+1. Run `Inject-CodexPlusPlus.ps1` from the new directory if Codex uses this repository.
+2. Run `Inject-ClaudePlusPlus.ps1` from the new directory if Claude uses this repository.
+3. Run `Install-UnityPackage.ps1` again for every affected Unity project; pass `-UnityProject` when the repository is
    outside that project.
-3. Open those projects and wait for Unity to resolve the package again. Delete the old directory only after confirming
+4. Open those projects and wait for Unity to resolve the package again. Delete the old directory only after confirming
    that everything works.
 
 ### Managing Only the Unity Links Tweak Junction
@@ -223,6 +237,18 @@ pwsh -NoProfile -File .\Uninject-CodexPlusPlus.ps1
 Neither junction command installs, repairs, or uninstalls Codex++, changes launchers, reads `state.json`, or deletes
 managed mirrors. A real directory at the live tweak path is blocked and never overwritten or removed. Restart Codex
 after changing the junction so the tweak is loaded or unloaded.
+
+Claude uses the same junction-only workflow under its own runtime root:
+
+```powershell
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Inject-ClaudePlusPlus.ps1
+pwsh -NoProfile -File .\Uninject-ClaudePlusPlus.ps1 -CheckOnly
+pwsh -NoProfile -File .\Uninject-ClaudePlusPlus.ps1
+```
+
+These scripts manage only `%APPDATA%\claude-plusplus\tweaks\com.kpk.unity-asset-links`; they do not call Claude++
+installation, control Claude processes, or change the Codex junction. Restart Claude after a Claude junction change.
 
 Removing the Unity package is independent of removing the tweak junction. To remove the package, delete the
 `com.kpk.codex-unity-link` entry from the target project's manifest and let Unity resolve packages again.
@@ -249,6 +275,9 @@ Push-Location .\codex-tweak
 try { npm test }
 finally { Pop-Location }
 codexplusplus validate-tweak (Resolve-Path .\codex-tweak).Path
+Push-Location .\claude-tweak
+try { npm test }
+finally { Pop-Location }
 ```
 
 After the Unity project is open and the package has compiled, you can check that project's Named Pipe:
@@ -266,21 +295,23 @@ A successful response contains `"ok":true` and `"code":"opened"`.
 
 ## Release Process
 
-The components and umbrella initially use the same stable version. Run each named workflow from its repository's
-GitHub Actions page. For `0.2.0` and later:
+The three components and umbrella use independent stable versions. Run each named workflow from its repository's
+GitHub Actions page. For the `v0.3.0` umbrella release:
 
-1. Validate and publish `unity-links-unity` at `v0.2.2`.
+1. Validate and publish `unity-links-unity` at `v0.2.4`.
 2. Validate and publish `unity-links-codex` at `v0.2.2`.
-3. Update this repository's two submodule pointers to those released commits.
-4. Run the umbrella integration tests and the three Unity link smoke checks.
-5. Run this repository's `Release` workflow from `master` with `0.2.2`.
-6. Review and manually publish the generated umbrella Draft Release.
-7. Submit the released Codex component commit for Codex++ Tweak Store review.
+3. Validate and publish `unity-links-claude` at `v0.1.2`.
+4. Update this repository's three submodule pointers to those released commits.
+5. Run the umbrella integration tests and Unity link smoke checks from both Desktop hosts.
+6. Run this repository's `Release` workflow from `master` with `0.3.0`.
+7. Review and manually publish the generated umbrella Draft Release.
+8. Submit only the released Codex component commit for Codex++ Tweak Store review; the Claude component remains a
+   junction install.
 
 Never move or reuse a release tag. If a workflow retry finds the requested tag at the same commit, it may reuse that
-tag; a tag pointing elsewhere is an error. The umbrella workflow requires both submodules to point to the matching
-component tag. Codex++ update checks are advisory and only see published Releases, so a Draft Release does not notify
-users of an update.
+tag; a tag pointing elsewhere is an error. The umbrella workflow reads each component's own version and requires all
+three submodules to point to their matching component tags. Update checks are advisory and only see published
+Releases, so a Draft Release does not notify users of an update.
 
 ## Safety Boundaries and Exit Codes
 
