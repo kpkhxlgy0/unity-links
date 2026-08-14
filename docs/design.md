@@ -103,8 +103,9 @@ The package contains an Editor-only assembly and an automatically initialized re
 domain reload it computes the same Pipe name from `Directory.GetParent(Application.dataPath)` and begins accepting
 requests in a background task.
 
-Transport callbacks never call Unity APIs directly. A valid request is queued to the Unity main thread. The main-thread
-handler dispatches by the validated first path segment:
+Transport callbacks never call Unity APIs directly. The Unity main thread parses and validates each request, replies
+with `accepted`, and schedules the actual open for the next Editor delayed callback. The delayed handler dispatches by
+the validated first path segment:
 
 - `Assets`: load the object with `AssetDatabase.LoadAssetAtPath<UnityEngine.Object>` and call the appropriate overload
   of `AssetDatabase.OpenAsset` for the supplied line and column. This preserves existing `[OnOpenAsset]` handlers,
@@ -145,14 +146,16 @@ Response fields:
   "version": 1,
   "requestId": "opaque-id",
   "ok": true,
-  "code": "opened",
+  "code": "accepted",
   "message": ""
 }
 ```
 
-The initial response codes are `opened`, `invalidRequest`, `wrongProject`, `assetOutsideProject`, `assetMissing`, and
-`openFailed`. Before transport, the main half can return `fileMissing`, `notUnityProject`, or `notAssetFile`. The tweak
-produces `unityUnavailable` when it cannot connect within the timeout.
+The successful response code is `accepted`: it confirms validation and queueing before a potentially slow Unity open,
+not completion of the open itself. Validation failures can return `invalidRequest`, `wrongProject`,
+`assetOutsideProject`, or `assetMissing`. A failure after acceptance is logged in the Unity Console because the Pipe
+has already replied. Before transport, the main half can return `fileMissing`, `notUnityProject`, or `notAssetFile`.
+The tweak produces `unityUnavailable` when it cannot connect or receive the acknowledgement within the timeout.
 
 The request and response have conservative size limits. Unknown protocol versions, actions, or oversized messages are
 rejected.
@@ -172,8 +175,9 @@ so a digest collision or incorrectly routed request cannot cross projects.
   transient Codex notification.
 - File missing: do not send a request; show a concise notification. If a containing directory still exists, reveal it.
 - Malformed or unsupported project link: leave the link to Codex's existing behavior.
-- Unity rejects or fails to open a target: return a structured response, reveal the file, and show the response
-  message.
+- Unity rejects a request during validation: return a structured response, reveal the file, and show the response
+  message. If opening fails after `accepted`, log the failure in the Unity Console without triggering a second
+  Explorer action.
 - Domain reload during a request: the bounded timeout takes the same fallback path; the receiver returns after reload.
 - Logging: failures and lifecycle events go to the Codex++ tweak log or Unity Console. Successful opens do not log by
   default.
