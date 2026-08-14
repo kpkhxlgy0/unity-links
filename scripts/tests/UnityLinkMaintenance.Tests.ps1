@@ -735,6 +735,32 @@ Test-Case "refuses to replace a real tweak directory" {
     }
 }
 
+Test-Case "rejects non-junction reparse points as unsafe tweak paths" {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
+    try
+    {
+        $link = Join-Path $root "live/com.kpk.unity-asset-links"
+        $symbolicTarget = Join-Path $root "symbolic-target"
+        $expectedTarget = Join-Path $root "source/codex-tweak"
+        New-Item -ItemType Directory -Path (Split-Path $link -Parent),
+            $symbolicTarget, $expectedTarget -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $symbolicTarget "keep.txt"), "keep")
+        [System.IO.File]::WriteAllText((Join-Path $expectedTarget "manifest.json"), '{}')
+        New-Item -ItemType SymbolicLink -Path $link -Target $symbolicTarget | Out-Null
+
+        $state = Get-TweakLinkState -LinkPath $link -ExpectedTarget $expectedTarget
+        Assert-Equal "Unsafe" $state.Status
+        Assert-Throws { Set-TweakJunction -LinkPath $link -ExpectedTarget $expectedTarget } "unsupported reparse point"
+        Assert-Throws { Remove-TweakLink -LinkPath $link } "unsupported reparse point"
+        Assert-Equal "SymbolicLink" (Get-Item -LiteralPath $link -Force).LinkType
+        Assert-True (Test-Path -LiteralPath (Join-Path $symbolicTarget "keep.txt") -PathType Leaf)
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
 Test-Case "corrects only a wrong junction target" {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString("N"))
     try
