@@ -4,3 +4,6 @@
 [submodule "unity-package"]
 	path = unity-package
 	url = git@github.com:kpkhxlgy0/unity-links-unity.git
+[submodule "claude-tweak"]
+	path = claude-tweak
+	url = git@github.com:kpkhxlgy0/unity-links-claude.git

@@ -27,6 +27,8 @@ Test-Case "repository layout follows its supplied root" {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) "moved-unity-links"
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $root
     Assert-Equal (Join-Path $root "codex-tweak") $layout.TweakRoot
+    Assert-Equal (Join-Path $root "claude-tweak") $layout.ClaudeTweakRoot
+    Assert-Equal (Join-Path $root "claude-tweak/manifest.json") $layout.ClaudeTweakManifest
     Assert-Equal (Join-Path $root "unity-package") $layout.PackageRoot
 }
 
@@ -35,11 +37,14 @@ Test-Case "accepts initialized component manifests" {
     try
     {
         New-Item -ItemType Directory -Path (Join-Path $root "codex-tweak"),
+            (Join-Path $root "claude-tweak"),
             (Join-Path $root "unity-package") -Force | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $root "codex-tweak/manifest.json"), "{}")
+        [System.IO.File]::WriteAllText((Join-Path $root "claude-tweak/manifest.json"), "{}")
         [System.IO.File]::WriteAllText((Join-Path $root "unity-package/package.json"), "{}")
         $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $root
         Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
+        Assert-UnityLinkComponentInitialized -Layout $layout -Component ClaudeTweak
         Assert-UnityLinkComponentInitialized -Layout $layout -Component UnityPackage
     }
     finally
@@ -58,6 +63,9 @@ Test-Case "reports the exact command for an uninitialized component" {
             "git -C `"$root`" submodule update --init --recursive")
         Assert-Throws {
             Assert-UnityLinkComponentInitialized -Layout $layout -Component CodexTweak
+        } $commandPattern
+        Assert-Throws {
+            Assert-UnityLinkComponentInitialized -Layout $layout -Component ClaudeTweak
         } $commandPattern
         Assert-Throws {
             Assert-UnityLinkComponentInitialized -Layout $layout -Component UnityPackage
@@ -201,13 +209,16 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     }
 }
 
-Test-Case "pins both component repositories with SSH submodule URLs" {
+Test-Case "pins all component repositories with SSH submodule URLs" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $gitmodules = Get-Content -LiteralPath (Join-Path $repositoryRoot ".gitmodules") -Raw
     $required = @(
         '[submodule "codex-tweak"]',
         "path = codex-tweak",
         "url = git@github.com:kpkhxlgy0/unity-links-codex.git",
+        '[submodule "claude-tweak"]',
+        "path = claude-tweak",
+        "url = git@github.com:kpkhxlgy0/unity-links-claude.git",
         '[submodule "unity-package"]',
         "path = unity-package",
         "url = git@github.com:kpkhxlgy0/unity-links-unity.git")
