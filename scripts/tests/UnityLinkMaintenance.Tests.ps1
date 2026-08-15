@@ -208,9 +208,9 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     Assert-Equal "0.2.2" $tweakManifest.version
     Assert-Equal "0.2.2" $tweakPackage.version
     Assert-Equal "kpkhxlgy0/unity-links-claude" $claudeManifest.githubRepo
-    Assert-Equal "0.1.2" $claudeManifest.version
-    Assert-Equal "0.1.2" $claudePackage.version
-    Assert-Equal "0.2.2" $claudeManifest.minRuntime
+    Assert-Equal "0.1.3" $claudeManifest.version
+    Assert-Equal "0.1.3" $claudePackage.version
+    Assert-Equal "0.2.3" $claudeManifest.minRuntime
     Assert-Equal "both" $claudeManifest.scope
     Assert-Equal "index.js" $claudeManifest.main
     Assert-Equal '["ipc","filesystem","claude-sessions"]' `
