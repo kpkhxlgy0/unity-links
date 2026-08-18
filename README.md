@@ -85,7 +85,7 @@ umbrella junction rather than the Tweak Store. Unity Package Manager users insta
 current stable tagged Git URL is:
 
 ```text
-https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.4
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.5
 ```
 
 Use this umbrella checkout when you need the coordinated Windows installer, local `file:` dependency, integration
@@ -298,9 +298,9 @@ A successful response contains `"ok":true` and `"code":"opened"`.
 The three components and umbrella use independent stable versions. Run each named workflow from its repository's
 GitHub Actions page. For the `v0.3.0` umbrella release:
 
-1. Validate and publish `unity-links-unity` at `v0.2.4`.
+1. Validate and publish `unity-links-unity` at `v0.2.5`.
 2. Validate and publish `unity-links-codex` at `v0.2.2`.
-3. Validate and publish `unity-links-claude` at `v0.1.2`.
+3. Validate and publish `unity-links-claude` at `v0.1.3`.
 4. Update this repository's three submodule pointers to those released commits.
 5. Run the umbrella integration tests and Unity link smoke checks from both Desktop hosts.
 6. Run this repository's `Release` workflow from `master` with `0.3.0`.

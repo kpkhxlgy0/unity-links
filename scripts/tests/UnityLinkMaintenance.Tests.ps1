@@ -215,7 +215,7 @@ Test-Case "MIT license and bilingual release documentation are complete" {
     Assert-Equal "index.js" $claudeManifest.main
     Assert-Equal '["ipc","filesystem","claude-sessions"]' `
         ($claudeManifest.permissions | ConvertTo-Json -Compress)
-    Assert-Equal "0.2.4" $unityPackage.version
+    Assert-Equal "0.2.5" $unityPackage.version
     Assert-Equal "https://github.com/kpkhxlgy0/unity-links-unity/blob/master/LICENSE" `
         $unityPackage.licensesUrl
 

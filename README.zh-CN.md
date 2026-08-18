@@ -78,7 +78,7 @@ Store。Unity Package Manager 用户只安装 `unity-links-unity`。
 当前稳定版带标签的 Git URL 为：
 
 ```text
-https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.4
+https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.5
 ```
 
 需要协调式 Windows 安装、本地 `file:` 依赖、集成测试，或针对固定组件组合开发时，再使用本总入口仓库。
@@ -271,9 +271,9 @@ node .\codex-tweak\scripts\send-open.js `
 三个组件与总入口使用独立稳定版本。每个 workflow 都从对应仓库的 GitHub Actions 页面运行。总入口
 `v0.3.0` 的发布顺序为：
 
-1. 验证并发布 `unity-links-unity` 的 `v0.2.4`。
+1. 验证并发布 `unity-links-unity` 的 `v0.2.5`。
 2. 验证并发布 `unity-links-codex` 的 `v0.2.2`。
-3. 验证并发布 `unity-links-claude` 的 `v0.1.2`。
+3. 验证并发布 `unity-links-claude` 的 `v0.1.3`。
 4. 将本仓库的三个 submodule 指针更新到上述已发布 commit。
 5. 运行总入口集成测试，并从两个桌面宿主执行 Unity 链接 smoke check。
 6. 从 `master` 运行本仓库的 `Release` workflow，输入 `0.3.0`。
