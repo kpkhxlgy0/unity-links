@@ -85,56 +85,119 @@ function ConvertFrom-SimpleYamlScalar
     return $trimmed
 }
 
+function Get-YamlStructuralLines
+{
+    param([Parameter(Mandatory)] [string] $Workflow)
+
+    $lines = @()
+    $blockScalarIndent = -1
+    foreach ($rawLine in @($Workflow -split '\r?\n'))
+    {
+        $trimmed = $rawLine.Trim()
+        $currentIndent = $rawLine.Length - $rawLine.TrimStart().Length
+        if ($blockScalarIndent -ge 0)
+        {
+            if (!$trimmed -or $currentIndent -gt $blockScalarIndent) { continue }
+            $blockScalarIndent = -1
+        }
+        if (!$trimmed -or $trimmed.StartsWith("#")) { continue }
+
+        $lines += [pscustomobject] @{
+            Indent = $currentIndent
+            Trimmed = $trimmed
+        }
+        if ($trimmed -match ':\s*[|>](?:[+-][1-9]?|[1-9][+-]?)?\s*(?:#.*)?$')
+        {
+            $blockScalarIndent = $currentIndent
+        }
+    }
+    return $lines
+}
+
 function Get-GitHubActionsCheckoutSteps
 {
     param([Parameter(Mandatory)] [string] $Workflow)
 
-    $lines = @($Workflow -split '\r?\n')
+    $lines = @(Get-YamlStructuralLines -Workflow $Workflow)
     $steps = @()
+    $mappingPath = [System.Collections.Generic.List[object]]::new()
     for ($start = 0; $start -lt $lines.Count; $start++)
     {
-        if ($lines[$start] -notmatch '^(\s*)-\s+name:\s*(.+?)\s*$') { continue }
-
-        $stepIndent = $Matches[1].Length
-        $stepName = ConvertFrom-SimpleYamlScalar $Matches[2]
-        $uses = ""
-        $with = @{}
-        $withIndent = -1
-        for ($cursor = $start + 1; $cursor -lt $lines.Count; $cursor++)
+        $line = $lines[$start]
+        while ($mappingPath.Count -gt 0 -and
+            $mappingPath[$mappingPath.Count - 1].Indent -ge $line.Indent)
         {
-            $line = $lines[$cursor]
-            $trimmed = $line.Trim()
-            if (!$trimmed -or $trimmed.StartsWith("#")) { continue }
+            $mappingPath.RemoveAt($mappingPath.Count - 1)
+        }
 
-            $currentIndent = $line.Length - $line.TrimStart().Length
-            if ($currentIndent -le $stepIndent) { break }
-            if ($trimmed -match '^uses:\s*(\S+)$')
+        $nameMatch = [regex]::Match($line.Trimmed, '^-\s+name:\s*(.+?)\s*$')
+        $path = @($mappingPath | ForEach-Object { $_.Key })
+        $isJobStep = $path.Count -eq 3 -and $path[0] -ceq "jobs" -and $path[2] -ceq "steps"
+        if ($nameMatch.Success -and $isJobStep)
+        {
+            $stepIndent = $line.Indent
+            $stepLines = @()
+            for ($cursor = $start + 1; $cursor -lt $lines.Count; $cursor++)
             {
-                $uses = ConvertFrom-SimpleYamlScalar $Matches[1]
-                continue
+                if ($lines[$cursor].Indent -le $stepIndent) { break }
+                $stepLines += $lines[$cursor]
             }
-            if ($trimmed -ceq "with:")
+
+            $stepName = ConvertFrom-SimpleYamlScalar $nameMatch.Groups[1].Value
+            $uses = ""
+            $with = @{}
+            if ($stepLines.Count -gt 0)
             {
-                $withIndent = $currentIndent
-                continue
+                $directIndent = ($stepLines | Measure-Object -Property Indent -Minimum).Minimum
+                $withIndex = -1
+                for ($index = 0; $index -lt $stepLines.Count; $index++)
+                {
+                    $child = $stepLines[$index]
+                    if ($child.Indent -ne $directIndent) { continue }
+                    if ($child.Trimmed -ceq "with:") { $withIndex = $index }
+                    if ($child.Trimmed -match '^uses:\s*(\S+)$')
+                    {
+                        $uses = ConvertFrom-SimpleYamlScalar $Matches[1]
+                    }
+                }
+
+                if ($withIndex -ge 0)
+                {
+                    $withLines = @()
+                    for ($index = $withIndex + 1; $index -lt $stepLines.Count; $index++)
+                    {
+                        if ($stepLines[$index].Indent -le $directIndent) { break }
+                        $withLines += $stepLines[$index]
+                    }
+                    if ($withLines.Count -gt 0)
+                    {
+                        $withChildIndent = ($withLines | Measure-Object -Property Indent -Minimum).Minimum
+                        foreach ($child in $withLines)
+                        {
+                            if ($child.Indent -ne $withChildIndent -or
+                                $child.Trimmed -notmatch '^([A-Za-z0-9_-]+):\s*(.*?)\s*$') { continue }
+                            $with[$Matches[1]] = ConvertFrom-SimpleYamlScalar $Matches[2]
+                        }
+                    }
+                }
             }
-            if ($withIndent -ge 0 -and $currentIndent -gt $withIndent -and
-                $trimmed -match '^([A-Za-z0-9_-]+):\s*(.*?)\s*$')
+
+            if ($uses.StartsWith("actions/checkout@"))
             {
-                $with[$Matches[1]] = ConvertFrom-SimpleYamlScalar $Matches[2]
-            }
-            elseif ($withIndent -ge 0 -and $currentIndent -le $withIndent)
-            {
-                $withIndent = -1
+                $steps += [pscustomobject] @{
+                    Name = $stepName
+                    Uses = $uses
+                    With = $with
+                }
             }
         }
-        if ($uses.StartsWith("actions/checkout@"))
+
+        if ($line.Trimmed -match '^([^:#][^:]*):\s*$')
         {
-            $steps += [pscustomobject] @{
-                Name = $stepName
-                Uses = $uses
-                With = $with
-            }
+            $mappingPath.Add([pscustomobject] @{
+                    Indent = $line.Indent
+                    Key = ConvertFrom-SimpleYamlScalar $Matches[1]
+                })
         }
     }
     return $steps
@@ -476,6 +539,65 @@ jobs:
             Assert-ReviewedCodexPlusPlusCheckout -Workflow $workflow -Label "decoy"
         } $case.Error
     }
+}
+
+Test-Case "workflow checkout validation ignores sparse-checkout block scalar decoys" {
+    $expectedRepository = "kpkhxlgy0/codex-plusplus"
+    $expectedCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+    foreach ($indicator in @("|", ">-", "|2+"))
+    {
+        foreach ($case in @(
+                [pscustomobject] @{
+                    Repository = "example/wrong"
+                    Ref = $expectedCommit
+                    Error = "wrong checkout repository"
+                },
+                [pscustomobject] @{
+                    Repository = $expectedRepository
+                    Ref = "wrong-ref"
+                    Error = "wrong checkout ref"
+                }))
+        {
+            $workflow = @"
+jobs:
+  validate:
+    steps:
+      - name: Check out pinned Codex++
+        uses: actions/checkout@v6
+        with:
+          repository: $($case.Repository)
+          ref: $($case.Ref)
+          sparse-checkout: $indicator
+            repository: $expectedRepository
+            ref: $expectedCommit
+"@
+            Assert-Throws {
+                Assert-ReviewedCodexPlusPlusCheckout -Workflow $workflow -Label "block decoy"
+            } $case.Error
+        }
+    }
+}
+
+Test-Case "workflow checkout validation ignores fake steps inside run block scalars" {
+    $expectedRepository = "kpkhxlgy0/codex-plusplus"
+    $expectedCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+    $workflow = @"
+jobs:
+  validate:
+    steps:
+      - name: Unrelated script
+        shell: pwsh
+        run: |
+          Write-Output decoy
+          - name: Check out pinned Codex++
+            uses: actions/checkout@v6
+            with:
+              repository: $expectedRepository
+              ref: $expectedCommit
+"@
+    Assert-Throws {
+        Assert-ReviewedCodexPlusPlusCheckout -Workflow $workflow -Label "run block decoy"
+    } 'must contain exactly one pinned Codex\+\+ checkout'
 }
 
 Test-Case "Codex++ installer assignments use the reviewed 1.0.2 source" {
