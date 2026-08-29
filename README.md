@@ -14,7 +14,7 @@ column information.
 - A Unity 2022.3 project.
 - PowerShell 7, available as `pwsh`.
 - Git, used to clone this repository.
-- Node.js 20 or newer and npm, used only during the first installation of Codex++ 1.0.0. Claude++ end users do not
+- Node.js 20 or newer and npm, used only during the first installation of Codex++ 1.0.1. Claude++ end users do not
   need Node.js.
 - Internet access when cloning the repository and installing Codex++ for the first time.
 
@@ -93,7 +93,7 @@ tests, or development against the exact component set.
 
 ## First-Time Setup
 
-Check the environment first, then install the pinned Codex++ 1.0.0 release. The installation script is also the
+Check the environment first, then install the pinned Codex++ 1.0.1 release. The installation script is also the
 routine-maintenance entry point: it delegates Codex discovery to the native Codex++ installer, refreshes the patch,
 and removes the one previous Store mirror replaced by the run. It does not inspect or modify the Unity Links tweak
 junction:
@@ -316,7 +316,7 @@ Releases, so a Draft Release does not notify users of an update.
 ## Safety Boundaries and Exit Codes
 
 The Codex maintenance scripts never terminate, launch, or automatically control Codex, and they never modify
-WindowsApps directly. With Codex++ 1.0.0, do not run `codexplusplus debug` without an explicit `--app`; these
+WindowsApps directly. With Codex++ 1.0.1, do not run `codexplusplus debug` without an explicit `--app`; these
 maintenance scripts do not use `debug`. They also keep the Codex++ watcher disabled and serialize global maintenance
 with `Local\CodexPlusPlus.EditorLinks.Maintenance.v1`.
 

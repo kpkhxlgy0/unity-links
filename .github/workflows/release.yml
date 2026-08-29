@@ -68,8 +68,8 @@ jobs:
       - name: Check out pinned Codex++
         uses: actions/checkout@v6
         with:
-          repository: b-nnett/codex-plusplus
-          ref: f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7
+          repository: kpkhxlgy0/codex-plusplus
+          ref: 854ea58c79b562483bc768cc78a7cd2f6683df11
           path: .release-tools/codex-plusplus
           persist-credentials: false
 

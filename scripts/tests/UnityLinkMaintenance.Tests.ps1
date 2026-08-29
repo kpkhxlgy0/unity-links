@@ -156,6 +156,7 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     $requiredEnglishText = @(
         "[简体中文](README.zh-CN.md)",
         "Claude++",
+        "Codex++ 1.0.1",
         "claude-tweak",
         "Inject-ClaudePlusPlus.ps1",
         "Uninject-ClaudePlusPlus.ps1",
@@ -165,6 +166,7 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     $requiredChineseText = @(
         "[English](README.md)",
         "Claude++",
+        "Codex++ 1.0.1",
         "claude-tweak",
         "Inject-ClaudePlusPlus.ps1",
         "Uninject-ClaudePlusPlus.ps1",
@@ -276,7 +278,8 @@ Test-Case "release workflow is manual guarded and draft-only" {
         '@{ Path = "unity-package"; Version =',
         'git -C $path fetch --tags origin',
         "scripts/release/validate-release.test.mjs",
-        "f98e7e9d1fa068dde9e0dddfb43b128acb4e2fd7",
+        "kpkhxlgy0/codex-plusplus",
+        "854ea58c79b562483bc768cc78a7cd2f6683df11",
         "npm run build --workspace codex-plusplus",
         "gh release create",
         "--verify-tag",
@@ -292,6 +295,42 @@ Test-Case "release workflow is manual guarded and draft-only" {
     Assert-True (!$workflow.Contains("git fetch --force"))
     Assert-True (!$workflow.Contains("pull_request:"))
     Assert-True (!$workflow.Contains("--json tagName,url"))
+}
+
+Test-Case "active workflows use the reviewed Codex++ source" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $archivedRepository = "b-" + "nnett/codex-plusplus"
+    $oldCommit = "f98e7e9d1fa068dde9e0" + "dddfb43b128acb4e2fd7"
+    $workflowPaths = @(
+        ".github/workflows/release.yml",
+        "codex-tweak/.github/workflows/ci.yml",
+        "codex-tweak/.github/workflows/release.yml")
+    foreach ($workflowPath in $workflowPaths)
+    {
+        $workflow = Get-Content -LiteralPath (Join-Path $repositoryRoot $workflowPath) -Raw
+        Assert-True ($workflow.Contains("repository: kpkhxlgy0/codex-plusplus")) `
+            "$workflowPath does not use the canonical Codex++ repository."
+        Assert-True ($workflow.Contains("ref: 854ea58c79b562483bc768cc78a7cd2f6683df11")) `
+            "$workflowPath does not use the reviewed Codex++ commit."
+        Assert-True (!$workflow.Contains($archivedRepository)) `
+            "$workflowPath still uses the archived Codex++ repository."
+        Assert-True (!$workflow.Contains($oldCommit)) `
+            "$workflowPath still uses the old Codex++ commit."
+    }
+}
+
+Test-Case "Codex++ installer uses the reviewed 1.0.1 source" {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $installer = Get-Content -LiteralPath (Join-Path $repositoryRoot "Install-CodexPlusPlus.ps1") -Raw
+    $archivedRepository = "b-" + "nnett/codex-plusplus"
+    $oldCommit = "f98e7e9d1fa068dde9e0" + "dddfb43b128acb4e2fd7"
+
+    Assert-True ($installer.Contains('$codexPlusPlusVersion = [version] "1.0.1"'))
+    Assert-True ($installer.Contains('$codexPlusPlusCommit = "854ea58c79b562483bc768cc78a7cd2f6683df11"'))
+    Assert-True ($installer.Contains(
+            'https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit'))
+    Assert-True (!$installer.Contains($archivedRepository))
+    Assert-True (!$installer.Contains($oldCommit))
 }
 
 Test-Case "test harness reports intentionally skipped Unity project integration" {
@@ -849,6 +888,18 @@ Test-Case "keeps an existing compatible Codex++ without downgrade" {
     Assert-Equal "Current" $state.Status
 }
 
+Test-Case "keeps the pinned Codex++ version without reinstalling" {
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.1") -NodeMajor 22 -HasNpm $true `
+        -TargetMirrorRunning $false
+    Assert-Equal "Current" $state.Status
+}
+
+Test-Case "requires the pinned upgrade from Codex++ 1.0.0" {
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.0") -NodeMajor 22 -HasNpm $true `
+        -TargetMirrorRunning $false
+    Assert-Equal "InstallRequired" $state.Status
+}
+
 Test-Case "blocks installation without prerequisites" {
     $oldNode = Get-CodexPlusPlusInstallState -InstalledVersion $null -NodeMajor 18 -HasNpm $true `
         -TargetMirrorRunning $false
@@ -869,12 +920,12 @@ Test-Case "validates only the pinned Codex++ source layout" {
     try
     {
         New-Item -ItemType Directory -Path (Join-Path $root "packages/installer/src") -Force | Out-Null
-        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.0"}')
+        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.1"}')
         [System.IO.File]::WriteAllText((Join-Path $root "package-lock.json"), '{}')
         [System.IO.File]::WriteAllText((Join-Path $root "packages/installer/src/cli.ts"), "export {};")
         Assert-True (Test-CodexPlusPlusSourceLayout -SourceRoot $root)
-        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.1"}')
-        Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.0"
+        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.0"}')
+        Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.1"
     }
     finally
     {

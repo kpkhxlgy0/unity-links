@@ -13,7 +13,7 @@ Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 - Unity 2022.3 项目。
 - PowerShell 7，命令名为 `pwsh`。
 - Git，用于克隆本仓库。
-- Node.js 20 或更新版本及 npm；只在首次安装 Codex++ 1.0.0 时使用。Claude++ 普通用户不需要 Node.js。
+- Node.js 20 或更新版本及 npm；只在首次安装 Codex++ 1.0.1 时使用。Claude++ 普通用户不需要 Node.js。
 - 首次克隆仓库和首次安装 Codex++ 时可访问互联网。
 
 所有 PowerShell 命令都应在本仓库根目录运行。脚本通过 `$PSScriptRoot` 定位文件，不依赖固定盘符或固定项目名。
@@ -85,7 +85,7 @@ https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.5
 
 ## 首次安装
 
-先检测环境，再安装固定的 Codex++ 1.0.0。安装脚本也是日常维护入口：它委托 Codex++ 原生发现并维护独立版或
+先检测环境，再安装固定的 Codex++ 1.0.1。安装脚本也是日常维护入口：它委托 Codex++ 原生发现并维护独立版或
 Store 版，修正启动入口，并清理本次被替换的上一个 Store 镜像。它不会检查或修改 Unity Links tweak junction：
 
 ```powershell
@@ -286,7 +286,7 @@ node .\codex-tweak\scripts\send-open.js `
 
 ## 安全边界与退出码
 
-所有 Codex 维护脚本都不终止、启动或自动控制 Codex，也不直接修改 WindowsApps。Codex++ 1.0.0 不应在没有
+所有 Codex 维护脚本都不终止、启动或自动控制 Codex，也不直接修改 WindowsApps。Codex++ 1.0.1 不应在没有
 显式 `--app` 的情况下运行 `codexplusplus debug`；这些维护脚本不使用 `debug`。脚本还会保持 Codex++
 watcher 禁用，并通过 `Local\CodexPlusPlus.EditorLinks.Maintenance.v1` 串行执行全局维护。
 
