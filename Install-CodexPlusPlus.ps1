@@ -7,8 +7,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$codexPlusPlusVersion = [version] "1.0.1"
-$codexPlusPlusCommit = "854ea58c79b562483bc768cc78a7cd2f6683df11"
+$codexPlusPlusVersion = [version] "1.0.2"
+$codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
 $archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
 $scriptsRoot = Join-Path $PSScriptRoot "scripts"
 Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force
@@ -433,7 +433,7 @@ try
         $directVersion = Get-CommandVersion -CommandInfo $nodeCommand -PrefixArguments @($installedCli)
         if ($directVersion -ne $codexPlusPlusVersion)
         {
-            throw "Expected the built Codex++ CLI to report 1.0.1, found $directVersion."
+            throw "Expected the built Codex++ CLI to report 1.0.2, found $directVersion."
         }
     }
 
@@ -493,7 +493,7 @@ try
         $shimVersion = Get-CommandVersion -CommandInfo $codexPlusPlusCommand
         if ($shimVersion -ne $codexPlusPlusVersion)
         {
-            throw "Expected the installed Codex++ command to report 1.0.1, found $shimVersion."
+            throw "Expected the installed Codex++ command to report 1.0.2, found $shimVersion."
         }
     }
 

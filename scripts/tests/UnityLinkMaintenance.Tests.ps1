@@ -23,6 +23,138 @@ function Unity-Project-TestCase
     Test-Case -Name $Name -Body $Body
 }
 
+function Get-PowerShellAssignmentExpression
+{
+    param(
+        [Parameter(Mandatory)] [string] $ScriptText,
+        [Parameter(Mandatory)] [string] $VariableName)
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        $ScriptText,
+        [ref] $tokens,
+        [ref] $parseErrors)
+    if (@($parseErrors).Count -gt 0)
+    {
+        throw "PowerShell parse failed: $($parseErrors[0].Message)"
+    }
+    $assignments = @($ast.FindAll({
+                param($node)
+                return $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $node.Left.VariablePath.UserPath -ceq $VariableName
+            }, $true))
+    if ($assignments.Count -ne 1)
+    {
+        throw "Expected exactly one assignment for `$$VariableName, found $($assignments.Count)."
+    }
+    return $assignments[0].Right.Expression
+}
+
+function Assert-CodexPlusPlusInstallerPin
+{
+    param([Parameter(Mandatory)] [string] $ScriptText)
+
+    $version = Get-PowerShellAssignmentExpression -ScriptText $ScriptText `
+        -VariableName "codexPlusPlusVersion"
+    Assert-True ($version -is [System.Management.Automation.Language.ConvertExpressionAst]) `
+        "Codex++ version assignment must retain its version cast."
+    Assert-Equal "System.Version" $version.StaticType.FullName
+    Assert-True ($version.Child -is [System.Management.Automation.Language.StringConstantExpressionAst])
+    Assert-Equal "1.0.2" $version.Child.Value
+
+    $commit = Get-PowerShellAssignmentExpression -ScriptText $ScriptText `
+        -VariableName "codexPlusPlusCommit"
+    Assert-True ($commit -is [System.Management.Automation.Language.StringConstantExpressionAst])
+    Assert-Equal "85d4065f7c025327bb6fb8075ef9225dda5d185f" $commit.Value
+
+    $archive = Get-PowerShellAssignmentExpression -ScriptText $ScriptText -VariableName "archiveUri"
+    Assert-True ($archive -is [System.Management.Automation.Language.ExpandableStringExpressionAst])
+    Assert-Equal `
+        'https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit' `
+        $archive.Value
+}
+
+function ConvertFrom-SimpleYamlScalar
+{
+    param([Parameter(Mandatory)] [string] $Value)
+
+    $trimmed = $Value.Trim()
+    if ($trimmed -match '^(["''])(.*)\1$') { return $Matches[2] }
+    return $trimmed
+}
+
+function Get-GitHubActionsCheckoutSteps
+{
+    param([Parameter(Mandatory)] [string] $Workflow)
+
+    $lines = @($Workflow -split '\r?\n')
+    $steps = @()
+    for ($start = 0; $start -lt $lines.Count; $start++)
+    {
+        if ($lines[$start] -notmatch '^(\s*)-\s+name:\s*(.+?)\s*$') { continue }
+
+        $stepIndent = $Matches[1].Length
+        $stepName = ConvertFrom-SimpleYamlScalar $Matches[2]
+        $uses = ""
+        $with = @{}
+        $withIndent = -1
+        for ($cursor = $start + 1; $cursor -lt $lines.Count; $cursor++)
+        {
+            $line = $lines[$cursor]
+            $trimmed = $line.Trim()
+            if (!$trimmed -or $trimmed.StartsWith("#")) { continue }
+
+            $currentIndent = $line.Length - $line.TrimStart().Length
+            if ($currentIndent -le $stepIndent) { break }
+            if ($trimmed -match '^uses:\s*(\S+)$')
+            {
+                $uses = ConvertFrom-SimpleYamlScalar $Matches[1]
+                continue
+            }
+            if ($trimmed -ceq "with:")
+            {
+                $withIndent = $currentIndent
+                continue
+            }
+            if ($withIndent -ge 0 -and $currentIndent -gt $withIndent -and
+                $trimmed -match '^([A-Za-z0-9_-]+):\s*(.*?)\s*$')
+            {
+                $with[$Matches[1]] = ConvertFrom-SimpleYamlScalar $Matches[2]
+            }
+            elseif ($withIndent -ge 0 -and $currentIndent -le $withIndent)
+            {
+                $withIndent = -1
+            }
+        }
+        if ($uses.StartsWith("actions/checkout@"))
+        {
+            $steps += [pscustomobject] @{
+                Name = $stepName
+                Uses = $uses
+                With = $with
+            }
+        }
+    }
+    return $steps
+}
+
+function Assert-ReviewedCodexPlusPlusCheckout
+{
+    param(
+        [Parameter(Mandatory)] [string] $Workflow,
+        [Parameter(Mandatory)] [string] $Label)
+
+    $matches = @(Get-GitHubActionsCheckoutSteps -Workflow $Workflow |
+            Where-Object { $_.Name -ceq "Check out pinned Codex++" })
+    Assert-Equal 1 $matches.Count "$Label must contain exactly one pinned Codex++ checkout."
+    Assert-Equal "kpkhxlgy0/codex-plusplus" $matches[0].With.repository `
+        "$Label has the wrong checkout repository."
+    Assert-Equal "85d4065f7c025327bb6fb8075ef9225dda5d185f" $matches[0].With.ref `
+        "$Label has the wrong checkout ref."
+}
+
 Test-Case "repository layout follows its supplied root" {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) "moved-unity-links"
     $layout = Get-UnityLinkRepositoryLayout -RepositoryRoot $root
@@ -156,7 +288,7 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     $requiredEnglishText = @(
         "[简体中文](README.zh-CN.md)",
         "Claude++",
-        "Codex++ 1.0.1",
+        "Codex++ 1.0.2",
         "claude-tweak",
         "Inject-ClaudePlusPlus.ps1",
         "Uninject-ClaudePlusPlus.ps1",
@@ -166,7 +298,7 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     $requiredChineseText = @(
         "[English](README.md)",
         "Claude++",
-        "Codex++ 1.0.1",
+        "Codex++ 1.0.2",
         "claude-tweak",
         "Inject-ClaudePlusPlus.ps1",
         "Uninject-ClaudePlusPlus.ps1",
@@ -278,8 +410,6 @@ Test-Case "release workflow is manual guarded and draft-only" {
         '@{ Path = "unity-package"; Version =',
         'git -C $path fetch --tags origin',
         "scripts/release/validate-release.test.mjs",
-        "kpkhxlgy0/codex-plusplus",
-        "854ea58c79b562483bc768cc78a7cd2f6683df11",
         "npm run build --workspace codex-plusplus",
         "gh release create",
         "--verify-tag",
@@ -299,8 +429,6 @@ Test-Case "release workflow is manual guarded and draft-only" {
 
 Test-Case "active workflows use the reviewed Codex++ source" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-    $archivedRepository = "b-" + "nnett/codex-plusplus"
-    $oldCommit = "f98e7e9d1fa068dde9e0" + "dddfb43b128acb4e2fd7"
     $workflowPaths = @(
         ".github/workflows/release.yml",
         "codex-tweak/.github/workflows/ci.yml",
@@ -308,29 +436,83 @@ Test-Case "active workflows use the reviewed Codex++ source" {
     foreach ($workflowPath in $workflowPaths)
     {
         $workflow = Get-Content -LiteralPath (Join-Path $repositoryRoot $workflowPath) -Raw
-        Assert-True ($workflow.Contains("repository: kpkhxlgy0/codex-plusplus")) `
-            "$workflowPath does not use the canonical Codex++ repository."
-        Assert-True ($workflow.Contains("ref: 854ea58c79b562483bc768cc78a7cd2f6683df11")) `
-            "$workflowPath does not use the reviewed Codex++ commit."
-        Assert-True (!$workflow.Contains($archivedRepository)) `
-            "$workflowPath still uses the archived Codex++ repository."
-        Assert-True (!$workflow.Contains($oldCommit)) `
-            "$workflowPath still uses the old Codex++ commit."
+        Assert-ReviewedCodexPlusPlusCheckout -Workflow $workflow -Label $workflowPath
     }
 }
 
-Test-Case "Codex++ installer uses the reviewed 1.0.1 source" {
+Test-Case "workflow checkout validation ignores canonical decoys" {
+    $expectedRepository = "kpkhxlgy0/codex-plusplus"
+    $expectedCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+    foreach ($case in @(
+            [pscustomobject] @{
+                Repository = "example/wrong"
+                Ref = $expectedCommit
+                Error = "wrong checkout repository"
+            },
+            [pscustomobject] @{
+                Repository = $expectedRepository
+                Ref = "wrong-ref"
+                Error = "wrong checkout ref"
+            }))
+    {
+        $workflow = @"
+jobs:
+  validate:
+    steps:
+      - name: Check out pinned Codex++
+        uses: actions/checkout@v6
+        with:
+          repository: $($case.Repository)
+          ref: $($case.Ref)
+      - name: Unrelated decoy
+        env:
+          repository: $expectedRepository
+          ref: $expectedCommit
+        run: echo decoy
+# repository: $expectedRepository
+# ref: $expectedCommit
+"@
+        Assert-Throws {
+            Assert-ReviewedCodexPlusPlusCheckout -Workflow $workflow -Label "decoy"
+        } $case.Error
+    }
+}
+
+Test-Case "Codex++ installer assignments use the reviewed 1.0.2 source" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $installer = Get-Content -LiteralPath (Join-Path $repositoryRoot "Install-CodexPlusPlus.ps1") -Raw
-    $archivedRepository = "b-" + "nnett/codex-plusplus"
-    $oldCommit = "f98e7e9d1fa068dde9e0" + "dddfb43b128acb4e2fd7"
 
-    Assert-True ($installer.Contains('$codexPlusPlusVersion = [version] "1.0.1"'))
-    Assert-True ($installer.Contains('$codexPlusPlusCommit = "854ea58c79b562483bc768cc78a7cd2f6683df11"'))
-    Assert-True ($installer.Contains(
-            'https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit'))
-    Assert-True (!$installer.Contains($archivedRepository))
-    Assert-True (!$installer.Contains($oldCommit))
+    Assert-CodexPlusPlusInstallerPin -ScriptText $installer
+}
+
+Test-Case "installer assignment validation ignores comments and unrelated strings" {
+    $validInstaller = @'
+$codexPlusPlusVersion = [version] "1.0.2"
+$codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+$archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
+'@
+    foreach ($case in @(
+            [pscustomobject] @{
+                Expected = '$codexPlusPlusVersion = [version] "1.0.2"'
+                Wrong = '$codexPlusPlusVersion = [version] "9.9.9"'
+                Error = '1\.0\.2'
+            },
+            [pscustomobject] @{
+                Expected = '$codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"'
+                Wrong = '$codexPlusPlusCommit = "wrong-commit"'
+                Error = '85d4065f7c025327bb6fb8075ef9225dda5d185f'
+            },
+            [pscustomobject] @{
+                Expected = `
+                    '$archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"'
+                Wrong = '$archiveUri = "https://example.invalid/zip/$codexPlusPlusCommit"'
+                Error = 'codeload\.github\.com'
+            }))
+    {
+        $decoy = $validInstaller.Replace($case.Expected, $case.Wrong) +
+            "`n# $($case.Expected)`n`$unrelated = '$($case.Expected)'"
+        Assert-Throws { Assert-CodexPlusPlusInstallerPin -ScriptText $decoy } $case.Error
+    }
 }
 
 Test-Case "test harness reports intentionally skipped Unity project integration" {
@@ -889,9 +1071,15 @@ Test-Case "keeps an existing compatible Codex++ without downgrade" {
 }
 
 Test-Case "keeps the pinned Codex++ version without reinstalling" {
-    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.1") -NodeMajor 22 -HasNpm $true `
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.2") -NodeMajor 22 -HasNpm $true `
         -TargetMirrorRunning $false
     Assert-Equal "Current" $state.Status
+}
+
+Test-Case "requires the pinned upgrade from Codex++ 1.0.1" {
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.1") -NodeMajor 22 -HasNpm $true `
+        -TargetMirrorRunning $false
+    Assert-Equal "InstallRequired" $state.Status
 }
 
 Test-Case "requires the pinned upgrade from Codex++ 1.0.0" {
@@ -920,12 +1108,17 @@ Test-Case "validates only the pinned Codex++ source layout" {
     try
     {
         New-Item -ItemType Directory -Path (Join-Path $root "packages/installer/src") -Force | Out-Null
-        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.1"}')
+        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.2"}')
         [System.IO.File]::WriteAllText((Join-Path $root "package-lock.json"), '{}')
         [System.IO.File]::WriteAllText((Join-Path $root "packages/installer/src/cli.ts"), "export {};")
         Assert-True (Test-CodexPlusPlusSourceLayout -SourceRoot $root)
-        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.0"}')
-        Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.1"
+        foreach ($invalidVersion in @("1.0.1", "01.00.002"))
+        {
+            [System.IO.File]::WriteAllText(
+                (Join-Path $root "package.json"),
+                "{`"version`":`"$invalidVersion`"}")
+            Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.2"
+        }
     }
     finally
     {

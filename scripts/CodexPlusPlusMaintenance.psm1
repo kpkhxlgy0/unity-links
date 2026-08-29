@@ -665,7 +665,7 @@ function Get-CodexPlusPlusInstallState
         [bool] $HasNpm,
         [bool] $TargetMirrorRunning)
 
-    if ($null -ne $InstalledVersion -and $InstalledVersion -ge [version] "1.0.1")
+    if ($null -ne $InstalledVersion -and $InstalledVersion -ge [version] "1.0.2")
     {
         return [pscustomobject] @{
             Status = "Current"
@@ -695,7 +695,7 @@ function Get-CodexPlusPlusInstallState
     }
     return [pscustomobject] @{
         Status = "InstallRequired"
-        Reason = "Codex++ is not installed or is older than 1.0.1."
+        Reason = "Codex++ is not installed or is older than 1.0.2."
     }
 }
 
@@ -726,9 +726,9 @@ function Test-CodexPlusPlusSourceLayout
     }
 
     $package = Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json
-    if ([version] $package.version -ne [version] "1.0.1")
+    if ($package.version -isnot [string] -or $package.version -cne "1.0.2")
     {
-        throw "Expected Codex++ source version 1.0.1, found $($package.version)."
+        throw "Expected Codex++ source version 1.0.2, found $($package.version)."
     }
     return $true
 }
