@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$codexPlusPlusVersion = [version] "1.0.2"
+$codexPlusPlusVersion = [version] "1.0.3"
 $codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
 $archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
 $scriptsRoot = Join-Path $PSScriptRoot "scripts"
