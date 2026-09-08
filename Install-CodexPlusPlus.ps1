@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $codexPlusPlusVersion = [version] "1.0.3"
-$codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+$codexPlusPlusCommit = "534d641087778bd7a2055481be490307fd914980"
 $archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
 $scriptsRoot = Join-Path $PSScriptRoot "scripts"
 Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force

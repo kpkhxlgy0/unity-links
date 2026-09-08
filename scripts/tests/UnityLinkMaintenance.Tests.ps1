@@ -62,12 +62,12 @@ function Assert-CodexPlusPlusInstallerPin
         "Codex++ version assignment must retain its version cast."
     Assert-Equal "System.Version" $version.StaticType.FullName
     Assert-True ($version.Child -is [System.Management.Automation.Language.StringConstantExpressionAst])
-    Assert-Equal "1.0.2" $version.Child.Value
+    Assert-Equal "1.0.3" $version.Child.Value
 
     $commit = Get-PowerShellAssignmentExpression -ScriptText $ScriptText `
         -VariableName "codexPlusPlusCommit"
     Assert-True ($commit -is [System.Management.Automation.Language.StringConstantExpressionAst])
-    Assert-Equal "85d4065f7c025327bb6fb8075ef9225dda5d185f" $commit.Value
+    Assert-Equal "534d641087778bd7a2055481be490307fd914980" $commit.Value
 
     $archive = Get-PowerShellAssignmentExpression -ScriptText $ScriptText -VariableName "archiveUri"
     Assert-True ($archive -is [System.Management.Automation.Language.ExpandableStringExpressionAst])
@@ -214,7 +214,7 @@ function Assert-ReviewedCodexPlusPlusCheckout
     Assert-Equal 1 $matches.Count "$Label must contain exactly one pinned Codex++ checkout."
     Assert-Equal "kpkhxlgy0/codex-plusplus" $matches[0].With.repository `
         "$Label has the wrong checkout repository."
-    Assert-Equal "85d4065f7c025327bb6fb8075ef9225dda5d185f" $matches[0].With.ref `
+    Assert-Equal "534d641087778bd7a2055481be490307fd914980" $matches[0].With.ref `
         "$Label has the wrong checkout ref."
 }
 
@@ -505,7 +505,7 @@ Test-Case "active workflows use the reviewed Codex++ source" {
 
 Test-Case "workflow checkout validation ignores canonical decoys" {
     $expectedRepository = "kpkhxlgy0/codex-plusplus"
-    $expectedCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+    $expectedCommit = "534d641087778bd7a2055481be490307fd914980"
     foreach ($case in @(
             [pscustomobject] @{
                 Repository = "example/wrong"
@@ -543,7 +543,7 @@ jobs:
 
 Test-Case "workflow checkout validation ignores sparse-checkout block scalar decoys" {
     $expectedRepository = "kpkhxlgy0/codex-plusplus"
-    $expectedCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+    $expectedCommit = "534d641087778bd7a2055481be490307fd914980"
     foreach ($indicator in @("|", ">-", "|2+"))
     {
         foreach ($case in @(
@@ -580,7 +580,7 @@ jobs:
 
 Test-Case "workflow checkout validation ignores fake steps inside run block scalars" {
     $expectedRepository = "kpkhxlgy0/codex-plusplus"
-    $expectedCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+    $expectedCommit = "534d641087778bd7a2055481be490307fd914980"
     $workflow = @"
 jobs:
   validate:
@@ -600,7 +600,7 @@ jobs:
     } 'must contain exactly one pinned Codex\+\+ checkout'
 }
 
-Test-Case "Codex++ installer assignments use the reviewed 1.0.2 source" {
+Test-Case "Codex++ installer assignments use the reviewed 1.0.3 source" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $installer = Get-Content -LiteralPath (Join-Path $repositoryRoot "Install-CodexPlusPlus.ps1") -Raw
 
@@ -609,20 +609,20 @@ Test-Case "Codex++ installer assignments use the reviewed 1.0.2 source" {
 
 Test-Case "installer assignment validation ignores comments and unrelated strings" {
     $validInstaller = @'
-$codexPlusPlusVersion = [version] "1.0.2"
-$codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"
+$codexPlusPlusVersion = [version] "1.0.3"
+$codexPlusPlusCommit = "534d641087778bd7a2055481be490307fd914980"
 $archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
 '@
     foreach ($case in @(
             [pscustomobject] @{
-                Expected = '$codexPlusPlusVersion = [version] "1.0.2"'
+                Expected = '$codexPlusPlusVersion = [version] "1.0.3"'
                 Wrong = '$codexPlusPlusVersion = [version] "9.9.9"'
-                Error = '1\.0\.2'
+                Error = '1\.0\.3'
             },
             [pscustomobject] @{
-                Expected = '$codexPlusPlusCommit = "85d4065f7c025327bb6fb8075ef9225dda5d185f"'
+                Expected = '$codexPlusPlusCommit = "534d641087778bd7a2055481be490307fd914980"'
                 Wrong = '$codexPlusPlusCommit = "wrong-commit"'
-                Error = '85d4065f7c025327bb6fb8075ef9225dda5d185f'
+                Error = '534d641087778bd7a2055481be490307fd914980'
             },
             [pscustomobject] @{
                 Expected = `
