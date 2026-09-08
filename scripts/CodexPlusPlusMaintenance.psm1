@@ -2,6 +2,8 @@ Set-StrictMode -Version Latest
 
 $ErrorActionPreference = "Stop"
 
+$script:CodexPlusPlusVersion = [version] "1.0.2"
+
 $script:CodexMaintenanceMutexName =
     "Local\CodexPlusPlus.EditorLinks.Maintenance.v1"
 
@@ -663,9 +665,10 @@ function Get-CodexPlusPlusInstallState
         [AllowNull()] [version] $InstalledVersion,
         [int] $NodeMajor,
         [bool] $HasNpm,
-        [bool] $TargetMirrorRunning)
+        [bool] $TargetMirrorRunning,
+        [ValidateNotNull()] [version] $RequiredVersion = $script:CodexPlusPlusVersion)
 
-    if ($null -ne $InstalledVersion -and $InstalledVersion -ge [version] "1.0.2")
+    if ($null -ne $InstalledVersion -and $InstalledVersion -ge $RequiredVersion)
     {
         return [pscustomobject] @{
             Status = "Current"
@@ -695,7 +698,7 @@ function Get-CodexPlusPlusInstallState
     }
     return [pscustomobject] @{
         Status = "InstallRequired"
-        Reason = "Codex++ is not installed or is older than 1.0.2."
+        Reason = "Codex++ is not installed or is older than $RequiredVersion."
     }
 }
 
@@ -710,7 +713,9 @@ function Get-CodexPlusPlusInstallArguments
 function Test-CodexPlusPlusSourceLayout
 {
     [CmdletBinding()]
-    param([Parameter(Mandatory)] [string] $SourceRoot)
+    param(
+        [Parameter(Mandatory)] [string] $SourceRoot,
+        [ValidateNotNull()] [version] $ExpectedVersion = $script:CodexPlusPlusVersion)
 
     $root = Resolve-NormalizedPath $SourceRoot
     $requiredPaths = @(
@@ -726,9 +731,9 @@ function Test-CodexPlusPlusSourceLayout
     }
 
     $package = Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json
-    if ($package.version -isnot [string] -or $package.version -cne "1.0.2")
+    if ($package.version -isnot [string] -or $package.version -cne $ExpectedVersion.ToString())
     {
-        throw "Expected Codex++ source version 1.0.2, found $($package.version)."
+        throw "Expected Codex++ source version $ExpectedVersion, found $($package.version)."
     }
     return $true
 }

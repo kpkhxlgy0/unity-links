@@ -307,6 +307,7 @@ try
     {
         $installState = Get-CodexPlusPlusInstallState `
             -InstalledVersion $installedVersion `
+            -RequiredVersion $codexPlusPlusVersion `
             -NodeMajor $nodeMajor `
             -HasNpm ($null -ne $npmCommand) `
             -TargetMirrorRunning $codexRunning
@@ -396,7 +397,8 @@ try
             throw "Expected exactly one Codex++ source root in the pinned archive."
         }
         $extractedSource = $extracted[0].FullName
-        Test-CodexPlusPlusSourceLayout -SourceRoot $extractedSource | Out-Null
+        Test-CodexPlusPlusSourceLayout -SourceRoot $extractedSource `
+            -ExpectedVersion $codexPlusPlusVersion | Out-Null
 
         Push-Location $extractedSource
         try
@@ -433,13 +435,13 @@ try
         $directVersion = Get-CommandVersion -CommandInfo $nodeCommand -PrefixArguments @($installedCli)
         if ($directVersion -ne $codexPlusPlusVersion)
         {
-            throw "Expected the built Codex++ CLI to report 1.0.2, found $directVersion."
+            throw "Expected the built Codex++ CLI to report $codexPlusPlusVersion, found $directVersion."
         }
     }
 
     $nativeArguments = @(Get-CodexPlusPlusInstallArguments)
     $mutationResult = Invoke-CodexMutationSafely `
-        -TargetAppRoots @($previousAppRoot) `
+        -TargetAppRoots @($previousAppRoot | Where-Object { $_ }) `
         -Mutation {
             if ($installedCli)
             {
@@ -493,7 +495,7 @@ try
         $shimVersion = Get-CommandVersion -CommandInfo $codexPlusPlusCommand
         if ($shimVersion -ne $codexPlusPlusVersion)
         {
-            throw "Expected the installed Codex++ command to report 1.0.2, found $shimVersion."
+            throw "Expected the installed Codex++ command to report $codexPlusPlusVersion, found $shimVersion."
         }
     }
 
