@@ -7,8 +7,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$codexPlusPlusVersion = [version] "1.0.3"
-$codexPlusPlusCommit = "534d641087778bd7a2055481be490307fd914980"
+$codexPlusPlusVersion = [version] "1.0.4"
+$codexPlusPlusCommit = "5ddbf5e3cc2e085a00ee4a48d3adefea78300782"
 $archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
 $scriptsRoot = Join-Path $PSScriptRoot "scripts"
 Import-Module (Join-Path $scriptsRoot "UnityLinkCommon.psm1") -Force
@@ -515,12 +515,15 @@ try
     }
 
     $launchExecutable = Get-CodexDesktopExecutable -AppRoot $currentAppRoot
+    $launcherScriptPath = if (Test-PathInside -Path $currentAppRoot -Root $managedStoreRoot) {
+        Join-Path (Split-Path $statePath -Parent) "bin/launch-packaged-chatgpt.ps1"
+    } else { $null }
     $launcherCommandPath = Join-Path $env:LOCALAPPDATA "Microsoft/WindowsApps/codex-plusplus-codex.cmd"
     $programsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
     if (!$programsPath) { throw "The current user's Start Menu Programs folder is unavailable." }
     $startMenuShortcutPath = Join-Path $programsPath "Codex++.lnk"
     if (Set-CodexLauncherArtifacts `
-            -ExpectedExecutable $launchExecutable `
+            -ExpectedExecutable $launchExecutable -LauncherPath $launcherScriptPath `
             -CommandPath $launcherCommandPath `
             -StartMenuShortcutPath $startMenuShortcutPath)
     {
@@ -587,7 +590,7 @@ try
 
     Write-Host "Codex++ installation and routine maintenance are current."
     Write-Host "Codex app: $currentAppRoot"
-    Write-Host "Launch executable: $launchExecutable"
+    Write-Host "Launch command: $launcherCommandPath"
     Write-Host "Discovery: Codex++ locateCodex (native install without --app)"
 }
 catch

@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 
 $ErrorActionPreference = "Stop"
 
-$script:CodexPlusPlusVersion = [version] "1.0.2"
+$script:CodexPlusPlusVersion = [version] "1.0.4"
 
 $script:CodexMaintenanceMutexName =
     "Local\CodexPlusPlus.EditorLinks.Maintenance.v1"
@@ -857,11 +857,32 @@ function Get-CodexUninstallArguments
     return [string[]] @("uninstall", "--app", (Resolve-NormalizedPath $AppRoot))
 }
 
-function Get-CodexLauncherCommandText
+function Get-CodexLauncherDefinition
 {
-    param([Parameter(Mandatory)] [string] $ExpectedExecutable)
+    param(
+        [Parameter(Mandatory)] [string] $ExpectedExecutable,
+        [AllowNull()] [string] $LauncherPath)
 
-    return "@echo off`r`nstart `"`" `"$ExpectedExecutable`" %*`r`n"
+    if (!$LauncherPath)
+    {
+        return [pscustomobject] @{
+            TargetPath = $ExpectedExecutable
+            Arguments = ""
+            CommandText = "@echo off`r`nstart `"`" `"$ExpectedExecutable`" %*`r`n"
+        }
+    }
+
+    $target = Join-Path $env:SystemRoot "System32/WindowsPowerShell/v1.0/powershell.exe"
+    $arguments = @("-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+        "-ExecutionPolicy", "Bypass", "-File", (Resolve-NormalizedPath $LauncherPath))
+    $commandParts = @($target) + $arguments
+    return [pscustomobject] @{
+        TargetPath = $target
+        Arguments = ($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
+        CommandText = "@echo off`r`n" + (($commandParts | ForEach-Object {
+                    '"' + $_.Replace('%', '%%') + '"'
+                }) -join ' ') + " %*`r`n"
+    }
 }
 
 function Get-CodexLauncherState
@@ -870,32 +891,37 @@ function Get-CodexLauncherState
     param(
         [Parameter(Mandatory)] [string] $ExpectedExecutable,
         [Parameter(Mandatory)] [string] $CommandPath,
-        [Parameter(Mandatory)] [string] $StartMenuShortcutPath)
+        [Parameter(Mandatory)] [string] $StartMenuShortcutPath,
+        [AllowNull()] [string] $LauncherPath)
 
     $expected = Resolve-NormalizedPath $ExpectedExecutable
+    $definition = Get-CodexLauncherDefinition -ExpectedExecutable $expected -LauncherPath $LauncherPath
     $mismatches = [System.Collections.Generic.List[string]]::new()
-    $expectedCommand = Get-CodexLauncherCommandText -ExpectedExecutable $expected
+    if ($LauncherPath -and !(Test-Path -LiteralPath $LauncherPath -PathType Leaf))
+    {
+        $mismatches.Add((Resolve-NormalizedPath $LauncherPath))
+    }
     if (!(Test-Path -LiteralPath $CommandPath -PathType Leaf) -or
-        (Get-Content -Raw -LiteralPath $CommandPath) -cne $expectedCommand)
+        (Get-Content -Raw -LiteralPath $CommandPath) -cne $definition.CommandText)
     {
         $mismatches.Add((Resolve-NormalizedPath $CommandPath))
     }
 
-    $normalizedShortcut = Resolve-NormalizedPath $StartMenuShortcutPath
-    if (!(Test-Path -LiteralPath $normalizedShortcut -PathType Leaf))
+    $shortcutPath = Resolve-NormalizedPath $StartMenuShortcutPath
+    if (!(Test-Path -LiteralPath $shortcutPath -PathType Leaf))
     {
-        $mismatches.Add($normalizedShortcut)
+        $mismatches.Add($shortcutPath)
     }
     else
     {
         $shell = New-Object -ComObject WScript.Shell
-        $target = $shell.CreateShortcut($normalizedShortcut).TargetPath
-        if (!$target -or !(Test-PathEqual $target $expected))
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        if (!$shortcut.TargetPath -or !(Test-PathEqual $shortcut.TargetPath $definition.TargetPath) -or
+            ($LauncherPath -and $shortcut.Arguments -cne $definition.Arguments))
         {
-            $mismatches.Add($normalizedShortcut)
+            $mismatches.Add($shortcutPath)
         }
     }
-
     return [pscustomobject] @{
         Status = if ($mismatches.Count -eq 0) { "Current" } else { "Required" }
         ExpectedExecutable = $expected
@@ -909,7 +935,8 @@ function Set-CodexLauncherArtifacts
     param(
         [Parameter(Mandatory)] [string] $ExpectedExecutable,
         [Parameter(Mandatory)] [string] $CommandPath,
-        [Parameter(Mandatory)] [string] $StartMenuShortcutPath)
+        [Parameter(Mandatory)] [string] $StartMenuShortcutPath,
+        [AllowNull()] [string] $LauncherPath)
 
     $expected = Resolve-NormalizedPath $ExpectedExecutable
     if (!(Test-Path -LiteralPath $expected -PathType Leaf))
@@ -917,15 +944,20 @@ function Set-CodexLauncherArtifacts
         throw "Codex launch executable not found: $expected"
     }
     $state = Get-CodexLauncherState -ExpectedExecutable $expected -CommandPath $CommandPath `
-        -StartMenuShortcutPath $StartMenuShortcutPath
+        -StartMenuShortcutPath $StartMenuShortcutPath -LauncherPath $LauncherPath
     if ($state.Status -eq "Current") { return $false }
+    if ($LauncherPath)
+    {
+        # Store 启动入口由 Codex++ 维护，避免重写为丢失包身份的直接 EXE 启动。
+        throw "Codex++ package launcher verification failed: $($state.Mismatches -join ', '). Run codexplusplus repair."
+    }
 
     $commandParent = Split-Path (Resolve-NormalizedPath $CommandPath) -Parent
     New-Item -ItemType Directory -Path $commandParent -Force | Out-Null
     $encoding = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText(
         (Resolve-NormalizedPath $CommandPath),
-        (Get-CodexLauncherCommandText -ExpectedExecutable $expected),
+        (Get-CodexLauncherDefinition -ExpectedExecutable $expected).CommandText,
         $encoding)
 
     $shell = New-Object -ComObject WScript.Shell
@@ -938,7 +970,7 @@ function Set-CodexLauncherArtifacts
     $shortcut.Save()
 
     $verified = Get-CodexLauncherState -ExpectedExecutable $expected -CommandPath $CommandPath `
-        -StartMenuShortcutPath $StartMenuShortcutPath
+        -StartMenuShortcutPath $StartMenuShortcutPath -LauncherPath $LauncherPath
     if ($verified.Status -ne "Current")
     {
         throw "Codex++ launcher verification failed: $($verified.Mismatches -join ', ')"
