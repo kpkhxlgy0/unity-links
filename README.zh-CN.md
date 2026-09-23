@@ -10,6 +10,7 @@ Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 
 - Windows 10/11。
 - 已为当前 Windows 用户安装官方 Codex Desktop、Claude Code Desktop，或两者都安装。
+- 使用本仓库的 Claude Tweak 0.1.4 时，需要 Claude++ 0.3.3 或更新版本以支持新版 Claude 文件引用。
 - Unity 2022.3 项目。
 - PowerShell 7，命令名为 `pwsh`。
 - Git，用于克隆本仓库。

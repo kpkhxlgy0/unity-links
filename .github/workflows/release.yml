@@ -90,8 +90,8 @@ jobs:
       - name: Check out pinned Claude++
         uses: actions/checkout@v6
         with:
-          repository: kpkhxlgy0/ClaudePlusPlus
-          ref: 9d4522e0bb5effd3722cca8a488bf0955e06ed0a
+          repository: kpkhxlgy0/claude-plusplus
+          ref: 8311e3e11b6f45ac6c4d95ea6390547ef621642a
           path: .release-tools/claude-plusplus
           persist-credentials: false
 

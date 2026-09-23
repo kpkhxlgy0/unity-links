@@ -208,8 +208,8 @@ requires a syntactically valid `githubRepo` even for a local development tweak, 
 `kpkhxlgy0/unity-links`. Starting with the split `0.2.0` component, `githubRepo` is
 `kpkhxlgy0/unity-links-codex`. A failed advisory release lookup must not affect loading or link handling.
 
-The Claude++ Tweak uses the same id, `scope: "both"`, and shared Pipe protocol. Version `0.1.3` requires Claude++
-`0.2.3` and declares `permissions: ["ipc", "filesystem", "claude-sessions"]`. The `claude-sessions` permission is
+The Claude++ Tweak uses the same id, `scope: "both"`, and shared Pipe protocol. Version `0.1.4` requires Claude++
+`0.3.3` and declares `permissions: ["ipc", "filesystem", "claude-sessions"]`. The `claude-sessions` permission is
 used only to resolve the active session's native file reference and workspace root; Main filesystem and Pipe access
 remain behind the Tweak's existing validation boundary.
 

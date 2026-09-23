@@ -11,6 +11,7 @@ column information.
 
 - Windows 10/11.
 - The official Codex Desktop app, Claude Code Desktop, or both installed for the current Windows user.
+- Claude++ 0.3.3 or newer for the included Claude Tweak 0.1.4 and current Claude Desktop file references.
 - A Unity 2022.3 project.
 - PowerShell 7, available as `pwsh`.
 - Git, used to clone this repository.

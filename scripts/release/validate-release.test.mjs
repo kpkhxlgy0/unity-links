@@ -26,7 +26,7 @@ function fixtureRoot() {
     id: "com.kpk.unity-asset-links",
     version: "0.1.2",
     githubRepo: "kpkhxlgy0/unity-links-claude",
-    minRuntime: "0.2.3",
+    minRuntime: "0.3.3",
     scope: "both",
     main: "index.js",
     permissions: ["ipc", "filesystem", "claude-sessions"],
