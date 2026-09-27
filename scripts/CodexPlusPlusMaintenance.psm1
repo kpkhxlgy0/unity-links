@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 
 $ErrorActionPreference = "Stop"
 
-$script:CodexPlusPlusVersion = [version] "1.0.4"
+$script:CodexPlusPlusVersion = [version] "1.0.5"
 
 $script:CodexMaintenanceMutexName =
     "Local\CodexPlusPlus.EditorLinks.Maintenance.v1"

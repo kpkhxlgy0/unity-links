@@ -62,12 +62,12 @@ function Assert-CodexPlusPlusInstallerPin
         "Codex++ version assignment must retain its version cast."
     Assert-Equal "System.Version" $version.StaticType.FullName
     Assert-True ($version.Child -is [System.Management.Automation.Language.StringConstantExpressionAst])
-    Assert-Equal "1.0.4" $version.Child.Value
+    Assert-Equal "1.0.5" $version.Child.Value
 
     $commit = Get-PowerShellAssignmentExpression -ScriptText $ScriptText `
         -VariableName "codexPlusPlusCommit"
     Assert-True ($commit -is [System.Management.Automation.Language.StringConstantExpressionAst])
-    Assert-Equal "5ddbf5e3cc2e085a00ee4a48d3adefea78300782" $commit.Value
+    Assert-Equal "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d" $commit.Value
 
     $archive = Get-PowerShellAssignmentExpression -ScriptText $ScriptText -VariableName "archiveUri"
     Assert-True ($archive -is [System.Management.Automation.Language.ExpandableStringExpressionAst])
@@ -214,7 +214,7 @@ function Assert-ReviewedCodexPlusPlusCheckout
     Assert-Equal 1 $matches.Count "$Label must contain exactly one pinned Codex++ checkout."
     Assert-Equal "kpkhxlgy0/codex-plusplus" $matches[0].With.repository `
         "$Label has the wrong checkout repository."
-    Assert-Equal "5ddbf5e3cc2e085a00ee4a48d3adefea78300782" $matches[0].With.ref `
+    Assert-Equal "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d" $matches[0].With.ref `
         "$Label has the wrong checkout ref."
 }
 
@@ -351,7 +351,7 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     $requiredEnglishText = @(
         "[简体中文](README.zh-CN.md)",
         "Claude++",
-        "Codex++ 1.0.4",
+        "Codex++ 1.0.5",
         "claude-tweak",
         "Inject-ClaudePlusPlus.ps1",
         "Uninject-ClaudePlusPlus.ps1",
@@ -361,7 +361,7 @@ Test-Case "bilingual READMEs cover project-neutral first install and relocation"
     $requiredChineseText = @(
         "[English](README.md)",
         "Claude++",
-        "Codex++ 1.0.4",
+        "Codex++ 1.0.5",
         "claude-tweak",
         "Inject-ClaudePlusPlus.ps1",
         "Uninject-ClaudePlusPlus.ps1",
@@ -505,7 +505,7 @@ Test-Case "active workflows use the reviewed Codex++ source" {
 
 Test-Case "workflow checkout validation ignores canonical decoys" {
     $expectedRepository = "kpkhxlgy0/codex-plusplus"
-    $expectedCommit = "5ddbf5e3cc2e085a00ee4a48d3adefea78300782"
+    $expectedCommit = "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d"
     foreach ($case in @(
             [pscustomobject] @{
                 Repository = "example/wrong"
@@ -543,7 +543,7 @@ jobs:
 
 Test-Case "workflow checkout validation ignores sparse-checkout block scalar decoys" {
     $expectedRepository = "kpkhxlgy0/codex-plusplus"
-    $expectedCommit = "5ddbf5e3cc2e085a00ee4a48d3adefea78300782"
+    $expectedCommit = "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d"
     foreach ($indicator in @("|", ">-", "|2+"))
     {
         foreach ($case in @(
@@ -580,7 +580,7 @@ jobs:
 
 Test-Case "workflow checkout validation ignores fake steps inside run block scalars" {
     $expectedRepository = "kpkhxlgy0/codex-plusplus"
-    $expectedCommit = "5ddbf5e3cc2e085a00ee4a48d3adefea78300782"
+    $expectedCommit = "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d"
     $workflow = @"
 jobs:
   validate:
@@ -600,7 +600,7 @@ jobs:
     } 'must contain exactly one pinned Codex\+\+ checkout'
 }
 
-Test-Case "Codex++ installer assignments use the reviewed 1.0.4 source" {
+Test-Case "Codex++ installer assignments use the reviewed 1.0.5 source" {
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $installer = Get-Content -LiteralPath (Join-Path $repositoryRoot "Install-CodexPlusPlus.ps1") -Raw
 
@@ -609,20 +609,20 @@ Test-Case "Codex++ installer assignments use the reviewed 1.0.4 source" {
 
 Test-Case "installer assignment validation ignores comments and unrelated strings" {
     $validInstaller = @'
-$codexPlusPlusVersion = [version] "1.0.4"
-$codexPlusPlusCommit = "5ddbf5e3cc2e085a00ee4a48d3adefea78300782"
+$codexPlusPlusVersion = [version] "1.0.5"
+$codexPlusPlusCommit = "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d"
 $archiveUri = "https://codeload.github.com/kpkhxlgy0/codex-plusplus/zip/$codexPlusPlusCommit"
 '@
     foreach ($case in @(
             [pscustomobject] @{
-                Expected = '$codexPlusPlusVersion = [version] "1.0.4"'
+                Expected = '$codexPlusPlusVersion = [version] "1.0.5"'
                 Wrong = '$codexPlusPlusVersion = [version] "9.9.9"'
-                Error = '1\.0\.4'
+                Error = '1\.0\.5'
             },
             [pscustomobject] @{
-                Expected = '$codexPlusPlusCommit = "5ddbf5e3cc2e085a00ee4a48d3adefea78300782"'
+                Expected = '$codexPlusPlusCommit = "fa81f08bc74378d19a8935cf15b6d46b2a6ae19d"'
                 Wrong = '$codexPlusPlusCommit = "wrong-commit"'
-                Error = '5ddbf5e3cc2e085a00ee4a48d3adefea78300782'
+                Error = 'fa81f08bc74378d19a8935cf15b6d46b2a6ae19d'
             },
             [pscustomobject] @{
                 Expected = `
@@ -1193,7 +1193,7 @@ Test-Case "keeps an existing compatible Codex++ without downgrade" {
 }
 
 Test-Case "keeps the pinned Codex++ version without reinstalling" {
-    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.4") -NodeMajor 22 -HasNpm $true `
+    $state = Get-CodexPlusPlusInstallState -InstalledVersion ([version] "1.0.5") -NodeMajor 22 -HasNpm $true `
         -TargetMirrorRunning $false
     Assert-Equal "Current" $state.Status
 }
@@ -1230,7 +1230,7 @@ Test-Case "validates only the pinned Codex++ source layout" {
     try
     {
         New-Item -ItemType Directory -Path (Join-Path $root "packages/installer/src") -Force | Out-Null
-        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.4"}')
+        [System.IO.File]::WriteAllText((Join-Path $root "package.json"), '{"version":"1.0.5"}')
         [System.IO.File]::WriteAllText((Join-Path $root "package-lock.json"), '{}')
         [System.IO.File]::WriteAllText((Join-Path $root "packages/installer/src/cli.ts"), "export {};")
         Assert-True (Test-CodexPlusPlusSourceLayout -SourceRoot $root)
@@ -1239,7 +1239,7 @@ Test-Case "validates only the pinned Codex++ source layout" {
             [System.IO.File]::WriteAllText(
                 (Join-Path $root "package.json"),
                 "{`"version`":`"$invalidVersion`"}")
-            Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.4"
+            Assert-Throws { Test-CodexPlusPlusSourceLayout -SourceRoot $root } "1.0.5"
         }
     }
     finally
