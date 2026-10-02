@@ -14,7 +14,7 @@ Settings，`Packages` 打开 Package Manager；代码链接保留行列信息。
 - Unity 2022.3 项目。
 - PowerShell 7，命令名为 `pwsh`。
 - Git，用于克隆本仓库。
-- Node.js 20 或更新版本及 npm；只在首次安装 Codex++ 1.0.5 时使用。Claude++ 普通用户不需要 Node.js。
+- Node.js 20 或更新版本及 npm；只在首次安装 Codex++ 1.0.6 时使用。Claude++ 普通用户不需要 Node.js。
 - 首次克隆仓库和首次安装 Codex++ 时可访问互联网。
 
 所有 PowerShell 命令都应在本仓库根目录运行。脚本通过 `$PSScriptRoot` 定位文件，不依赖固定盘符或固定项目名。
@@ -86,7 +86,7 @@ https://github.com/kpkhxlgy0/unity-links-unity.git#v0.2.5
 
 ## 首次安装
 
-先检测环境，再安装固定的 Codex++ 1.0.5。安装脚本也是日常维护入口：它委托 Codex++ 原生发现并维护独立版或
+先检测环境，再安装固定的 Codex++ 1.0.6。安装脚本也是日常维护入口：它委托 Codex++ 原生发现并维护独立版或
 Store 版，修正启动入口，并清理本次被替换的上一个 Store 镜像。它不会检查或修改 Unity Links tweak junction：
 
 ```powershell
@@ -131,7 +131,7 @@ pwsh -NoProfile -File .\Install-UnityPackage.ps1 `
 ```
 
 打开对应 Unity 项目，等待 Unity 完成 package 编译，并确认 Console 没有该 package 的编译错误。最后从 Windows
-开始菜单启动 `Codex++`。Store 镜像只校验并保留 Codex++ 1.0.5 生成的包身份 PowerShell 启动器、CMD shim
+开始菜单启动 `Codex++`。Store 镜像只校验并保留 Codex++ 1.0.6 生成的包身份 PowerShell 启动器、CMD shim
 和开始菜单快捷方式；缺失或过期时提示运行 `codexplusplus repair`，不会覆盖成直接 EXE 启动。官方 Store
 安装必须保持注册。独立安装版保留直接启动真实 EXE 的方式。旧版本创建且确实指向受管镜像的桌面快捷方式
 会被安全移除。
