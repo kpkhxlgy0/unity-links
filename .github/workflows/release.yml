@@ -69,7 +69,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: kpkhxlgy0/codex-plusplus
-          ref: 19f6aa933f0ed673ea1bc350fec1d26c1b87531c
+          ref: 85a304d6839e703de0d1f861a5f403df13b022b8
           path: .release-tools/codex-plusplus
           persist-credentials: false
 
